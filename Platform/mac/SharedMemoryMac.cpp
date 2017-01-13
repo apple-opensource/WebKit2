@@ -29,6 +29,7 @@
 #include "ArgumentDecoder.h"
 #include "ArgumentEncoder.h"
 #include "Arguments.h"
+#include "Logging.h"
 #include "MachPort.h"
 #include <WebCore/MachSendRight.h>
 #include <WebCore/MachVMSPI.h>
@@ -106,17 +107,21 @@ RefPtr<SharedMemory> SharedMemory::allocate(size_t size)
     mach_vm_address_t address;
     kern_return_t kr = mach_vm_allocate(mach_task_self(), &address, round_page(size), VM_FLAGS_ANYWHERE);
     if (kr != KERN_SUCCESS) {
+#if RELEASE_LOG_DISABLED
         LOG_ERROR("Failed to allocate mach_vm_allocate shared memory (%zu bytes). %s (%x)", size, mach_error_string(kr), kr);
+#else
+        RELEASE_LOG_ERROR("%p - SharedMemory::allocate: Failed to allocate mach_vm_allocate shared memory (%zu bytes). %{public}s (%x)", nullptr, size, mach_error_string(kr), kr);
+#endif
         return nullptr;
     }
 
-    RefPtr<SharedMemory> sharedMemory = adoptRef(*new SharedMemory);
+    auto sharedMemory = adoptRef(*new SharedMemory);
     sharedMemory->m_size = size;
     sharedMemory->m_data = toPointer(address);
     sharedMemory->m_port = MACH_PORT_NULL;
     sharedMemory->m_protection = Protection::ReadWrite;
 
-    return sharedMemory;
+    return WTFMove(sharedMemory);
 }
 
 static inline vm_prot_t machProtection(SharedMemory::Protection protection)
@@ -139,7 +144,11 @@ static WebCore::MachSendRight makeMemoryEntry(size_t size, vm_offset_t offset, S
     mach_port_t port;
     kern_return_t kr = mach_make_memory_entry_64(mach_task_self(), &memoryObjectSize, offset, machProtection(protection) | VM_PROT_IS_MASK | MAP_MEM_VM_SHARE, &port, parentEntry);
     if (kr != KERN_SUCCESS) {
+#if RELEASE_LOG_DISABLED
         LOG_ERROR("Failed to create a mach port for shared memory. %s (%x)", mach_error_string(kr), kr);
+#else
+        RELEASE_LOG_ERROR("%p - SharedMemory::makeMemoryEntry: Failed to create a mach port for shared memory. %{public}s (%x)", nullptr, mach_error_string(kr), kr);
+#endif
         return { };
     }
 
@@ -156,13 +165,13 @@ RefPtr<SharedMemory> SharedMemory::create(void* data, size_t size, Protection pr
     if (!sendRight)
         return nullptr;
 
-    RefPtr<SharedMemory> sharedMemory(adoptRef(new SharedMemory));
+    auto sharedMemory(adoptRef(*new SharedMemory));
     sharedMemory->m_size = size;
     sharedMemory->m_data = nullptr;
     sharedMemory->m_port = sendRight.leakSendRight();
     sharedMemory->m_protection = protection;
 
-    return sharedMemory.release();
+    return WTFMove(sharedMemory);
 }
 
 RefPtr<SharedMemory> SharedMemory::map(const Handle& handle, Protection protection)
@@ -175,28 +184,49 @@ RefPtr<SharedMemory> SharedMemory::map(const Handle& handle, Protection protecti
     vm_prot_t vmProtection = machProtection(protection);
     mach_vm_address_t mappedAddress = 0;
     kern_return_t kr = mach_vm_map(mach_task_self(), &mappedAddress, round_page(handle.m_size), 0, VM_FLAGS_ANYWHERE, handle.m_port, 0, false, vmProtection, vmProtection, VM_INHERIT_NONE);
+#if RELEASE_LOG_DISABLED
     if (kr != KERN_SUCCESS)
         return nullptr;
+#else
+    if (kr != KERN_SUCCESS) {
+        RELEASE_LOG_ERROR("%p - SharedMemory::map: Failed to map shared memory. %{public}s (%x)", nullptr, mach_error_string(kr), kr);
+        return nullptr;
+    }
+#endif
 
-    RefPtr<SharedMemory> sharedMemory(adoptRef(new SharedMemory));
+    auto sharedMemory(adoptRef(*new SharedMemory));
     sharedMemory->m_size = handle.m_size;
     sharedMemory->m_data = toPointer(mappedAddress);
     sharedMemory->m_port = MACH_PORT_NULL;
     sharedMemory->m_protection = protection;
 
-    return sharedMemory;
+    return WTFMove(sharedMemory);
 }
 
 SharedMemory::~SharedMemory()
 {
     if (m_data) {
         kern_return_t kr = mach_vm_deallocate(mach_task_self(), toVMAddress(m_data), round_page(m_size));
+#if RELEASE_LOG_DISABLED
         ASSERT_UNUSED(kr, kr == KERN_SUCCESS);
+#else
+        if (kr != KERN_SUCCESS) {
+            RELEASE_LOG_ERROR("%p - SharedMemory::~SharedMemory: Failed to deallocate shared memory. %{public}s (%x)", this, mach_error_string(kr), kr);
+            ASSERT_NOT_REACHED();
+        }
+#endif
     }
 
     if (m_port) {
         kern_return_t kr = mach_port_deallocate(mach_task_self(), m_port);
+#if RELEASE_LOG_DISABLED
         ASSERT_UNUSED(kr, kr == KERN_SUCCESS);
+#else
+        if (kr != KERN_SUCCESS) {
+            RELEASE_LOG_ERROR("%p - SharedMemory::~SharedMemory: Failed to deallocate port. %{public}s (%x)", this, mach_error_string(kr), kr);
+            ASSERT_NOT_REACHED();
+        }
+#endif
     }        
 }
     

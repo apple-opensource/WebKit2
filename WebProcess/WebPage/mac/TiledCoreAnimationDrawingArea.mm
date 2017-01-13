@@ -78,8 +78,6 @@ TiledCoreAnimationDrawingArea::TiledCoreAnimationDrawingArea(WebPage& webPage, c
     , m_layerTreeStateIsFrozen(false)
     , m_layerFlushScheduler(this)
     , m_isPaintingSuspended(!(parameters.viewState & ViewState::IsVisible))
-    , m_exposedRect(FloatRect::infiniteRect())
-    , m_scrolledExposedRect(FloatRect::infiniteRect())
     , m_transientZoomScale(1)
     , m_sendDidUpdateViewStateTimer(RunLoop::main(), this, &TiledCoreAnimationDrawingArea::didUpdateViewStateTimerFired)
     , m_wantsDidUpdateViewState(false)
@@ -396,6 +394,15 @@ void TiledCoreAnimationDrawingArea::dispatchAfterEnsuringUpdatedScrollPosition(s
 #endif
 }
 
+void TiledCoreAnimationDrawingArea::sendPendingNewlyReachedLayoutMilestones()
+{
+    if (!m_pendingNewlyReachedLayoutMilestones)
+        return;
+
+    m_webPage.send(Messages::WebPageProxy::DidReachLayoutMilestone(m_pendingNewlyReachedLayoutMilestones));
+    m_pendingNewlyReachedLayoutMilestones = 0;
+}
+
 bool TiledCoreAnimationDrawingArea::flushLayers()
 {
     ASSERT(!m_layerTreeStateIsFrozen);
@@ -413,20 +420,28 @@ bool TiledCoreAnimationDrawingArea::flushLayers()
         }
 
         FloatRect visibleRect = [m_hostingLayer frame];
-        visibleRect.intersect(m_scrolledExposedRect);
+        if (m_scrolledViewExposedRect)
+            visibleRect.intersect(m_scrolledViewExposedRect.value());
 
         // Because our view-relative overlay root layer is not attached to the main GraphicsLayer tree, we need to flush it manually.
         if (m_viewOverlayRootLayer)
             m_viewOverlayRootLayer->flushCompositingState(visibleRect, m_webPage.mainFrameView()->viewportIsStable());
 
-#if (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 90000) || (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101100)
         RefPtr<WebPage> retainedPage = &m_webPage;
+#if TARGET_OS_IPHONE || (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101100)
         [CATransaction addCommitHandler:[retainedPage] {
             if (Page* corePage = retainedPage->corePage()) {
                 if (Frame* coreFrame = retainedPage->mainFrame())
                     corePage->inspectorController().didComposite(*coreFrame);
             }
+            if (auto drawingArea = static_cast<TiledCoreAnimationDrawingArea*>(retainedPage->drawingArea()))
+                drawingArea->sendPendingNewlyReachedLayoutMilestones();
         } forPhase:kCATransactionPhasePostCommit];
+#else
+        dispatch_async(dispatch_get_main_queue(), [retainedPage] {
+            if (auto drawingArea = static_cast<TiledCoreAnimationDrawingArea*>(retainedPage->drawingArea()))
+                drawingArea->sendPendingNewlyReachedLayoutMilestones();
+        });
 #endif
 
         bool returnValue = m_webPage.mainFrameView()->flushCompositingStateIncludingSubframes();
@@ -439,16 +454,6 @@ bool TiledCoreAnimationDrawingArea::flushLayers()
         // that WebCore makes to the relevant layers, so re-apply our changes after flushing.
         if (m_transientZoomScale != 1)
             applyTransientZoomToLayers(m_transientZoomScale, m_transientZoomOrigin);
-
-        if (!m_fenceCallbacksForAfterNextFlush.isEmpty()) {
-            MachSendRight fencePort = m_layerHostingContext->createFencePort();
-
-            for (auto callbackID : m_fenceCallbacksForAfterNextFlush)
-                m_webPage.send(Messages::WebPageProxy::MachSendRightCallback(fencePort, callbackID));
-            m_fenceCallbacksForAfterNextFlush.clear();
-
-            m_layerHostingContext->setFencePort(fencePort.sendRight());
-        }
 
         return returnValue;
     }
@@ -506,9 +511,9 @@ void TiledCoreAnimationDrawingArea::resumePainting()
     [[NSNotificationCenter defaultCenter] postNotificationName:@"NSCAViewRenderDidResumeNotification" object:nil userInfo:[NSDictionary dictionaryWithObject:m_hostingLayer.get() forKey:@"layer"]];
 }
 
-void TiledCoreAnimationDrawingArea::setExposedRect(const FloatRect& exposedRect)
+void TiledCoreAnimationDrawingArea::setViewExposedRect(Optional<WebCore::FloatRect> viewExposedRect)
 {
-    m_exposedRect = exposedRect;
+    m_viewExposedRect = viewExposedRect;
     updateScrolledExposedRect();
 }
 
@@ -518,16 +523,16 @@ void TiledCoreAnimationDrawingArea::updateScrolledExposedRect()
     if (!frameView)
         return;
 
-    m_scrolledExposedRect = m_exposedRect;
+    m_scrolledViewExposedRect = m_viewExposedRect;
 
 #if !PLATFORM(IOS)
-    if (!m_exposedRect.isInfinite()) {
-        IntPoint scrollPositionWithOrigin = frameView->scrollPosition() + toIntSize(frameView->scrollOrigin());
-        m_scrolledExposedRect.moveBy(scrollPositionWithOrigin);
+    if (m_viewExposedRect) {
+        ScrollOffset scrollOffset = frameView->scrollOffsetFromPosition(frameView->scrollPosition());
+        m_scrolledViewExposedRect.value().moveBy(scrollOffset);
     }
 #endif
 
-    frameView->setExposedRect(m_scrolledExposedRect);
+    frameView->setViewExposedRect(m_scrolledViewExposedRect);
 }
 
 void TiledCoreAnimationDrawingArea::updateGeometry(const IntSize& viewSize, const IntSize& layerPosition, bool flushSynchronously, const WebCore::MachSendRight& fencePort)
@@ -703,7 +708,8 @@ PlatformCALayer* TiledCoreAnimationDrawingArea::shadowLayerForTransientZoom() co
     
 static FloatPoint shadowLayerPositionForFrame(FrameView& frameView, FloatPoint origin)
 {
-    FloatPoint position = frameView.renderView()->documentRect().location() + FloatPoint(0, frameView.yPositionForRootContentLayer());
+    // FIXME: correct for b-t documents?
+    FloatPoint position = frameView.positionForRootContentLayer();
     return position + origin.expandedTo(FloatPoint());
 }
 
@@ -874,9 +880,10 @@ void TiledCoreAnimationDrawingArea::addFence(const MachSendRight& fencePort)
     m_layerHostingContext->setFencePort(fencePort.sendRight());
 }
 
-void TiledCoreAnimationDrawingArea::replyWithFenceAfterNextFlush(uint64_t callbackID)
+bool TiledCoreAnimationDrawingArea::dispatchDidReachLayoutMilestone(WebCore::LayoutMilestones layoutMilestones)
 {
-    m_fenceCallbacksForAfterNextFlush.append(callbackID);
+    m_pendingNewlyReachedLayoutMilestones |= layoutMilestones;
+    return true;
 }
 
 } // namespace WebKit

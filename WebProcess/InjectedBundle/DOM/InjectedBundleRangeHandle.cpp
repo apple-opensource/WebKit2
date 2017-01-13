@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010, 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2010, 2015-2016 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -70,9 +70,9 @@ PassRefPtr<InjectedBundleRangeHandle> InjectedBundleRangeHandle::getOrCreate(Ran
     if (!result.isNewEntry)
         return PassRefPtr<InjectedBundleRangeHandle>(result.iterator->value);
 
-    RefPtr<InjectedBundleRangeHandle> rangeHandle = InjectedBundleRangeHandle::create(range);
-    result.iterator->value = rangeHandle.get();
-    return rangeHandle.release();
+    auto rangeHandle = InjectedBundleRangeHandle::create(range);
+    result.iterator->value = rangeHandle.ptr();
+    return WTFMove(rangeHandle);
 }
 
 Ref<InjectedBundleRangeHandle> InjectedBundleRangeHandle::create(Range* range)
@@ -97,7 +97,7 @@ Range* InjectedBundleRangeHandle::coreRange() const
 
 WebCore::IntRect InjectedBundleRangeHandle::boundingRectInWindowCoordinates() const
 {
-    FloatRect boundingRect = m_range->boundingRect();
+    FloatRect boundingRect = m_range->absoluteBoundingRect();
     Frame* frame = m_range->ownerDocument().frame();
     return frame->view()->contentsToWindow(enclosingIntRect(boundingRect));
 }
@@ -113,11 +113,13 @@ PassRefPtr<WebImage> InjectedBundleRangeHandle::renderedImage(SnapshotOptions op
     if (!frameView)
         return nullptr;
 
+    Ref<Frame> protector(*frame);
+
     VisibleSelection oldSelection = frame->selection().selection();
     frame->selection().setSelection(VisibleSelection(*m_range));
 
     float scaleFactor = (options & SnapshotOptionsExcludeDeviceScaleFactor) ? 1 : frame->page()->deviceScaleFactor();
-    IntRect paintRect = enclosingIntRect(m_range->boundingRect());
+    IntRect paintRect = enclosingIntRect(m_range->absoluteBoundingRect());
     IntSize backingStoreSize = paintRect.size();
     backingStoreSize.scale(scaleFactor);
 
@@ -129,7 +131,7 @@ PassRefPtr<WebImage> InjectedBundleRangeHandle::renderedImage(SnapshotOptions op
     graphicsContext->scale(FloatSize(scaleFactor, scaleFactor));
 
     paintRect.move(frameView->frameRect().x(), frameView->frameRect().y());
-    paintRect.move(-frameView->scrollOffset());
+    paintRect.moveBy(-frameView->scrollPosition());
 
     graphicsContext->translate(-paintRect.x(), -paintRect.y());
 
@@ -143,7 +145,7 @@ PassRefPtr<WebImage> InjectedBundleRangeHandle::renderedImage(SnapshotOptions op
     frameView->setPaintBehavior(paintBehavior);
     ownerDocument.updateLayout();
 
-    frameView->paint(graphicsContext.get(), paintRect);
+    frameView->paint(*graphicsContext, paintRect);
     frameView->setPaintBehavior(oldPaintBehavior);
 
     frame->selection().setSelection(oldSelection);
