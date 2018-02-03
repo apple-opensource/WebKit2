@@ -27,6 +27,7 @@
 
 #include "APIData.h"
 #include "PluginModuleInfo.h"
+#include "ProcessTerminationReason.h"
 #include "SameDocumentNavigationType.h"
 #include "WebEvent.h"
 #include "WebFramePolicyListenerProxy.h"
@@ -68,6 +69,8 @@ public:
 
     virtual void didStartProvisionalNavigation(WebKit::WebPageProxy&, API::Navigation*, API::Object*) { }
     virtual void didReceiveServerRedirectForProvisionalNavigation(WebKit::WebPageProxy&, API::Navigation*, API::Object*) { }
+    virtual void willPerformClientRedirect(WebKit::WebPageProxy&, const WTF::String&, double) { }
+    virtual void didCancelClientRedirect(WebKit::WebPageProxy&) { }
     virtual void didFailProvisionalNavigationWithError(WebKit::WebPageProxy&, WebKit::WebFrameProxy&, API::Navigation*, const WebCore::ResourceError&, API::Object*) { }
     virtual void didFailProvisionalLoadInSubframeWithError(WebKit::WebPageProxy&, WebKit::WebFrameProxy&, const WebCore::SecurityOriginData&, API::Navigation*, const WebCore::ResourceError&, API::Object*) { }
     virtual void didCommitNavigation(WebKit::WebPageProxy&, API::Navigation*, API::Object*) { }
@@ -82,7 +85,7 @@ public:
     virtual void didReceiveAuthenticationChallenge(WebKit::WebPageProxy&, WebKit::AuthenticationChallengeProxy*) { }
 
     // FIXME: These function should not be part of this client.
-    virtual void processDidCrash(WebKit::WebPageProxy&) { }
+    virtual void processDidTerminate(WebKit::WebPageProxy&, WebKit::ProcessTerminationReason) { }
     virtual void processDidBecomeResponsive(WebKit::WebPageProxy&) { }
     virtual void processDidBecomeUnresponsive(WebKit::WebPageProxy&) { }
 
