@@ -26,14 +26,10 @@
 #import "config.h"
 #import "WKBackForwardListItemInternal.h"
 
-#if WK_API_ENABLED
-
 #import "WKNSURLExtras.h"
 
-using namespace WebKit;
-
 @implementation WKBackForwardListItem {
-    API::ObjectStorage<WebBackForwardListItem> _item;
+    API::ObjectStorage<WebKit::WebBackForwardListItem> _item;
 }
 
 - (void)dealloc
@@ -73,6 +69,11 @@ using namespace WebKit;
     return nullptr;
 }
 
+- (CGPoint) _scrollPosition
+{
+    return CGPointMake(_item->pageState().mainFrameState.scrollPosition.x(), _item->pageState().mainFrameState.scrollPosition.y());
+}
+
 #pragma mark WKObject protocol implementation
 
 - (API::Object&)_apiObject
@@ -81,5 +82,3 @@ using namespace WebKit;
 }
 
 @end
-
-#endif // WK_API_ENABLED

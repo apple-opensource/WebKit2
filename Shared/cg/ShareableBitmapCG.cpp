@@ -28,15 +28,15 @@
 
 #include <WebCore/BitmapImage.h>
 #include <WebCore/GraphicsContextCG.h>
+#include <WebCore/ImageBufferUtilitiesCG.h>
 #include <WebCore/PlatformScreen.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <pal/spi/cocoa/IOSurfaceSPI.h>
 #include <wtf/RetainPtr.h>
 #include "CGUtilities.h"
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
     
 static CGColorSpaceRef colorSpace(const ShareableBitmap::Configuration& configuration)
 {
@@ -45,12 +45,7 @@ static CGColorSpaceRef colorSpace(const ShareableBitmap::Configuration& configur
 
 static bool wantsExtendedRange(const ShareableBitmap::Configuration& configuration)
 {
-#if (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101200) || PLATFORM(IOS)
     return CGColorSpaceUsesExtendedRange(colorSpace(configuration));
-#else
-    UNUSED_PARAM(configuration);
-    return false;
-#endif
 }
 
 static CGBitmapInfo bitmapInfo(const ShareableBitmap::Configuration& configuration)
@@ -78,7 +73,7 @@ static CGBitmapInfo bitmapInfo(const ShareableBitmap::Configuration& configurati
 Checked<unsigned, RecordOverflow> ShareableBitmap::calculateBytesPerRow(WebCore::IntSize size, const Configuration& configuration)
 {
     unsigned bytesPerRow = calculateBytesPerPixel(configuration) * size.width();
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     return IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, bytesPerRow);
 #else
     return bytesPerRow;
@@ -119,6 +114,9 @@ void ShareableBitmap::paint(WebCore::GraphicsContext& context, float scaleFactor
 RetainPtr<CGImageRef> ShareableBitmap::makeCGImageCopy()
 {
     auto graphicsContext = createGraphicsContext();
+    if (!graphicsContext || !graphicsContext->hasPlatformContext())
+        return nullptr;
+
     RetainPtr<CGImageRef> image = adoptCF(CGBitmapContextCreateImage(graphicsContext->platformContext()));
     return image;
 }
@@ -126,6 +124,7 @@ RetainPtr<CGImageRef> ShareableBitmap::makeCGImageCopy()
 RetainPtr<CGImageRef> ShareableBitmap::makeCGImage()
 {
     ref(); // Balanced by deref in releaseDataProviderData.
+    verifyImageBufferIsBigEnough(data(), sizeInBytes());
     RetainPtr<CGDataProvider> dataProvider = adoptCF(CGDataProviderCreateWithData(this, data(), sizeInBytes(), releaseDataProviderData));
     return createCGImage(dataProvider.get());
 }

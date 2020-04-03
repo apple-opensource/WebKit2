@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,7 @@
 #import "config.h"
 #import "TiledCoreAnimationDrawingArea.h"
 
-#if !PLATFORM(IOS)
+#if PLATFORM(MAC)
 
 #import "ColorSpaceData.h"
 #import "DrawingAreaProxyMessages.h"
@@ -41,22 +41,23 @@
 #import "WebProcess.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/DebugPageOverlays.h>
+#import <WebCore/Frame.h>
 #import <WebCore/FrameView.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/GraphicsLayerCA.h>
 #import <WebCore/InspectorController.h>
-#import <WebCore/MachSendRight.h>
-#import <WebCore/MainFrame.h>
 #import <WebCore/Page.h>
 #import <WebCore/PlatformCAAnimationCocoa.h>
 #import <WebCore/RenderLayerBacking.h>
 #import <WebCore/RenderLayerCompositor.h>
 #import <WebCore/RenderView.h>
+#import <WebCore/RunLoopObserver.h>
 #import <WebCore/ScrollbarTheme.h>
 #import <WebCore/Settings.h>
 #import <WebCore/TiledBacking.h>
 #import <WebCore/WebActionDisablingCALayerDelegate.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/MachSendRight.h>
 #import <wtf/MainThread.h>
 
 #if ENABLE(ASYNC_SCROLLING)
@@ -69,19 +70,14 @@
 + (void)synchronize;
 @end
 
+namespace WebKit {
 using namespace WebCore;
 
-namespace WebKit {
-
 TiledCoreAnimationDrawingArea::TiledCoreAnimationDrawingArea(WebPage& webPage, const WebPageCreationParameters& parameters)
-    : DrawingArea(DrawingAreaTypeTiledCoreAnimation, webPage)
-    , m_layerTreeStateIsFrozen(false)
-    , m_layerFlushScheduler(this)
-    , m_isPaintingSuspended(!(parameters.activityState & ActivityState::IsVisible))
-    , m_transientZoomScale(1)
+    : DrawingArea(DrawingAreaTypeTiledCoreAnimation, parameters.drawingAreaIdentifier, webPage)
+    , m_layerFlushThrottlingTimer(*this, &TiledCoreAnimationDrawingArea::layerFlushThrottlingTimerFired)
     , m_sendDidUpdateActivityStateTimer(RunLoop::main(), this, &TiledCoreAnimationDrawingArea::didUpdateActivityStateTimerFired)
-    , m_wantsDidUpdateActivityState(false)
-    , m_viewOverlayRootLayer(nullptr)
+    , m_isPaintingSuspended(!(parameters.activityState & ActivityState::IsVisible))
 {
     m_webPage.corePage()->settings().setForceCompositingMode(true);
 
@@ -91,17 +87,36 @@ TiledCoreAnimationDrawingArea::TiledCoreAnimationDrawingArea(WebPage& webPage, c
     [m_hostingLayer setOpaque:YES];
     [m_hostingLayer setGeometryFlipped:YES];
 
+    m_layerFlushRunLoopObserver = std::make_unique<WebCore::RunLoopObserver>(static_cast<CFIndex>(RunLoopObserver::WellKnownRunLoopOrders::LayerFlush), [this]() {
+        this->layerFlushRunLoopCallback();
+    });
+
     updateLayerHostingContext();
     setColorSpace(parameters.colorSpace);
-
-    LayerTreeContext layerTreeContext;
-    layerTreeContext.contextID = m_layerHostingContext->contextID();
-    m_webPage.send(Messages::DrawingAreaProxy::EnterAcceleratedCompositingMode(0, layerTreeContext));
 }
 
 TiledCoreAnimationDrawingArea::~TiledCoreAnimationDrawingArea()
 {
-    m_layerFlushScheduler.invalidate();
+    invalidateLayerFlushRunLoopObserver();
+}
+
+void TiledCoreAnimationDrawingArea::sendEnterAcceleratedCompositingModeIfNeeded()
+{
+    if (!m_rootLayer)
+        return;
+
+    if (!m_needsSendEnterAcceleratedCompositingMode)
+        return;
+    m_needsSendEnterAcceleratedCompositingMode = false;
+
+    // Let the first commit complete before sending.
+    RunLoop::main().dispatch([this, weakThis = makeWeakPtr(*this)] {
+        if (!weakThis)
+            return;
+        LayerTreeContext layerTreeContext;
+        layerTreeContext.contextID = m_layerHostingContext->contextID();
+        send(Messages::DrawingAreaProxy::EnterAcceleratedCompositingMode(0, layerTreeContext));
+    });
 }
 
 void TiledCoreAnimationDrawingArea::setNeedsDisplay()
@@ -165,10 +180,14 @@ void TiledCoreAnimationDrawingArea::setLayerTreeStateIsFrozen(bool layerTreeStat
         return;
 
     m_layerTreeStateIsFrozen = layerTreeStateIsFrozen;
-    if (m_layerTreeStateIsFrozen)
-        m_layerFlushScheduler.suspend();
-    else
-        m_layerFlushScheduler.resume();
+
+    if (m_layerTreeStateIsFrozen) {
+        invalidateLayerFlushRunLoopObserver();
+        m_layerFlushThrottlingTimer.stop();
+    } else {
+        // Immediate flush as any delay in unfreezing can result in flashes.
+        scheduleLayerFlushRunLoopObserver();
+    }
 }
 
 bool TiledCoreAnimationDrawingArea::layerTreeStateIsFrozen() const
@@ -176,14 +195,35 @@ bool TiledCoreAnimationDrawingArea::layerTreeStateIsFrozen() const
     return m_layerTreeStateIsFrozen;
 }
 
+void TiledCoreAnimationDrawingArea::scheduleInitialDeferredPaint()
+{
+}
+
 void TiledCoreAnimationDrawingArea::scheduleCompositingLayerFlush()
 {
-    m_layerFlushScheduler.schedule();
+    if (m_layerTreeStateIsFrozen) {
+        m_isLayerFlushThrottlingTemporarilyDisabledForInteraction = false;
+        return;
+    }
+
+    if (m_isLayerFlushThrottlingTemporarilyDisabledForInteraction) {
+        m_isLayerFlushThrottlingTemporarilyDisabledForInteraction = false;
+        scheduleLayerFlushRunLoopObserver();
+        m_layerFlushThrottlingTimer.stop();
+        return;
+    }
+
+    if (m_layerFlushThrottlingTimer.isActive()) {
+        ASSERT(m_isThrottlingLayerFlushes);
+        return;
+    }
+
+    scheduleLayerFlushRunLoopObserver();
 }
 
 void TiledCoreAnimationDrawingArea::scheduleCompositingLayerFlushImmediately()
 {
-    scheduleCompositingLayerFlush();
+    scheduleLayerFlushRunLoopObserver();
 }
 
 void TiledCoreAnimationDrawingArea::updatePreferences(const WebPreferencesStore&)
@@ -205,8 +245,7 @@ void TiledCoreAnimationDrawingArea::updatePreferences(const WebPreferencesStore&
     // in order to be scrolled by the ScrollingCoordinator.
     settings.setAcceleratedCompositingForFixedPositionEnabled(true);
 
-    if (MainFrame* mainFrame = m_webPage.mainFrame())
-        DebugPageOverlays::settingsChanged(*mainFrame);
+    DebugPageOverlays::settingsChanged(*m_webPage.corePage());
 
     bool showTiledScrollingIndicator = settings.showTiledScrollingIndicator();
     if (showTiledScrollingIndicator == !!m_debugInfoLayer)
@@ -228,38 +267,15 @@ void TiledCoreAnimationDrawingArea::updateRootLayers()
         [m_hostingLayer addSublayer:m_debugInfoLayer.get()];
 }
 
-void TiledCoreAnimationDrawingArea::attachViewOverlayGraphicsLayer(Frame* frame, GraphicsLayer* viewOverlayRootLayer)
+void TiledCoreAnimationDrawingArea::attachViewOverlayGraphicsLayer(GraphicsLayer* viewOverlayRootLayer)
 {
-    if (!frame->isMainFrame())
-        return;
-
     m_viewOverlayRootLayer = viewOverlayRootLayer;
     updateRootLayers();
+    scheduleCompositingLayerFlush();
 }
 
 void TiledCoreAnimationDrawingArea::mainFrameContentSizeChanged(const IntSize& size)
 {
-
-}
-
-void TiledCoreAnimationDrawingArea::updateIntrinsicContentSizeIfNeeded()
-{
-    if (!m_webPage.minimumLayoutSize().width())
-        return;
-
-    FrameView* frameView = m_webPage.mainFrameView();
-    if (!frameView)
-        return;
-
-    if (frameView->needsLayout())
-        return;
-
-    IntSize contentSize = frameView->autoSizingIntrinsicContentSize();
-    if (m_lastSentIntrinsicContentSize == contentSize)
-        return;
-
-    m_lastSentIntrinsicContentSize = contentSize;
-    m_webPage.send(Messages::DrawingAreaProxy::IntrinsicContentSizeDidChange(contentSize));
 }
 
 void TiledCoreAnimationDrawingArea::setShouldScaleViewToFitDocument(bool shouldScaleView)
@@ -281,6 +297,9 @@ void TiledCoreAnimationDrawingArea::scaleViewToFitDocumentIfNeeded()
 
     LOG(Resize, "TiledCoreAnimationDrawingArea %p scaleViewToFitDocumentIfNeeded", this);
     m_webPage.layoutIfNeeded();
+
+    if (!m_webPage.mainFrameView() || !m_webPage.mainFrameView()->renderView())
+        return;
 
     int viewWidth = m_webPage.size().width();
     int documentWidth = m_webPage.mainFrameView()->renderView()->unscaledDocumentRect().width();
@@ -328,6 +347,9 @@ void TiledCoreAnimationDrawingArea::scaleViewToFitDocumentIfNeeded()
     m_webPage.setUseFixedLayout(false);
     m_webPage.layoutIfNeeded();
 
+    if (!m_webPage.mainFrameView() || !m_webPage.mainFrameView()->renderView())
+        return;
+
     IntSize documentSize = m_webPage.mainFrameView()->renderView()->unscaledDocumentRect().size();
     m_lastViewSizeForScaleToFit = m_webPage.size();
     m_lastDocumentSizeForScaleToFit = documentSize;
@@ -370,7 +392,7 @@ void TiledCoreAnimationDrawingArea::dispatchAfterEnsuringUpdatedScrollPosition(W
     m_webPage.corePage()->scrollingCoordinator()->commitTreeStateIfNeeded();
 
     if (!m_layerTreeStateIsFrozen)
-        m_layerFlushScheduler.suspend();
+        invalidateLayerFlushRunLoopObserver();
 
     // It is possible for the drawing area to be destroyed before the bound block
     // is invoked, so grab a reference to the web page here so we can access the drawing area through it.
@@ -385,7 +407,7 @@ void TiledCoreAnimationDrawingArea::dispatchAfterEnsuringUpdatedScrollPosition(W
         function();
 
         if (!m_layerTreeStateIsFrozen)
-            m_layerFlushScheduler.resume();
+            scheduleLayerFlushRunLoopObserver();
 
         webPage->deref();
     });
@@ -394,13 +416,13 @@ void TiledCoreAnimationDrawingArea::dispatchAfterEnsuringUpdatedScrollPosition(W
 #endif
 }
 
-void TiledCoreAnimationDrawingArea::sendPendingNewlyReachedLayoutMilestones()
+void TiledCoreAnimationDrawingArea::sendPendingNewlyReachedPaintingMilestones()
 {
-    if (!m_pendingNewlyReachedLayoutMilestones)
+    if (!m_pendingNewlyReachedPaintingMilestones)
         return;
 
-    m_webPage.send(Messages::WebPageProxy::DidReachLayoutMilestone(m_pendingNewlyReachedLayoutMilestones));
-    m_pendingNewlyReachedLayoutMilestones = 0;
+    m_webPage.send(Messages::WebPageProxy::DidReachLayoutMilestone(m_pendingNewlyReachedPaintingMilestones));
+    m_pendingNewlyReachedPaintingMilestones = { };
 }
 
 void TiledCoreAnimationDrawingArea::addTransactionCallbackID(CallbackID callbackID)
@@ -409,17 +431,41 @@ void TiledCoreAnimationDrawingArea::addTransactionCallbackID(CallbackID callback
     scheduleCompositingLayerFlush();
 }
 
-bool TiledCoreAnimationDrawingArea::flushLayers()
+void TiledCoreAnimationDrawingArea::addCommitHandlers()
 {
-    ASSERT(!m_layerTreeStateIsFrozen);
+    if (m_webPage.firstFlushAfterCommit())
+        return;
+
+    [CATransaction addCommitHandler:[retainedPage = makeRefPtr(&m_webPage)] {
+        if (Page* corePage = retainedPage->corePage()) {
+            if (Frame* coreFrame = retainedPage->mainFrame())
+                corePage->inspectorController().willComposite(*coreFrame);
+        }
+    } forPhase:kCATransactionPhasePreCommit];
+
+    [CATransaction addCommitHandler:[retainedPage = makeRefPtr(&m_webPage)] {
+        if (Page* corePage = retainedPage->corePage()) {
+            if (Frame* coreFrame = retainedPage->mainFrame())
+                corePage->inspectorController().didComposite(*coreFrame);
+        }
+        if (auto drawingArea = static_cast<TiledCoreAnimationDrawingArea*>(retainedPage->drawingArea()))
+            drawingArea->sendPendingNewlyReachedPaintingMilestones();
+        retainedPage->setFirstFlushAfterCommit(false);
+    } forPhase:kCATransactionPhasePostCommit];
+    
+    m_webPage.setFirstFlushAfterCommit(true);
+}
+
+void TiledCoreAnimationDrawingArea::flushLayers(FlushType flushType)
+{
+    if (layerTreeStateIsFrozen())
+        return;
 
     @autoreleasepool {
         scaleViewToFitDocumentIfNeeded();
 
-        m_webPage.layoutIfNeeded();
+        m_webPage.updateRendering();
         m_webPage.flushPendingEditorStateUpdate();
-
-        updateIntrinsicContentSizeIfNeeded();
 
         if (m_pendingRootLayer) {
             setRootCompositingLayer(m_pendingRootLayer.get());
@@ -434,20 +480,16 @@ bool TiledCoreAnimationDrawingArea::flushLayers()
         if (m_viewOverlayRootLayer)
             m_viewOverlayRootLayer->flushCompositingState(visibleRect);
 
-        RefPtr<WebPage> retainedPage = &m_webPage;
-        [CATransaction addCommitHandler:[retainedPage] {
-            if (Page* corePage = retainedPage->corePage()) {
-                if (Frame* coreFrame = retainedPage->mainFrame())
-                    corePage->inspectorController().didComposite(*coreFrame);
-            }
-            if (auto drawingArea = static_cast<TiledCoreAnimationDrawingArea*>(retainedPage->drawingArea()))
-                drawingArea->sendPendingNewlyReachedLayoutMilestones();
-        } forPhase:kCATransactionPhasePostCommit];
+        addCommitHandlers();
+        
+        bool didFlushAllFrames = m_webPage.mainFrameView()->flushCompositingStateIncludingSubframes();
 
-        bool returnValue = m_webPage.mainFrameView()->flushCompositingStateIncludingSubframes();
 #if ENABLE(ASYNC_SCROLLING)
-        if (ScrollingCoordinator* scrollingCoordinator = m_webPage.corePage()->scrollingCoordinator())
+        if (auto* scrollingCoordinator = m_webPage.corePage()->scrollingCoordinator()) {
             scrollingCoordinator->commitTreeStateIfNeeded();
+            if (flushType == FlushType::Normal)
+                scrollingCoordinator->applyScrollingTreeLayerPositions();
+        }
 #endif
 
         // If we have an active transient zoom, we want the zoom to win over any changes
@@ -456,18 +498,26 @@ bool TiledCoreAnimationDrawingArea::flushLayers()
             applyTransientZoomToLayers(m_transientZoomScale, m_transientZoomOrigin);
 
         if (!m_pendingCallbackIDs.isEmpty()) {
-            m_webPage.send(Messages::DrawingAreaProxy::DispatchPresentationCallbacksAfterFlushingLayers(m_pendingCallbackIDs));
+            send(Messages::DrawingAreaProxy::DispatchPresentationCallbacksAfterFlushingLayers(m_pendingCallbackIDs));
             m_pendingCallbackIDs.clear();
         }
 
-        return returnValue;
+        if (didFlushAllFrames) {
+            sendEnterAcceleratedCompositingModeIfNeeded();
+            invalidateLayerFlushRunLoopObserver();
+        }
+
+        if (m_isThrottlingLayerFlushes)
+            startLayerFlushThrottlingTimer();
+        else
+            m_layerFlushThrottlingTimer.stop();
     }
 }
 
-void TiledCoreAnimationDrawingArea::activityStateDidChange(ActivityState::Flags changed, bool wantsDidUpdateActivityState, const Vector<CallbackID>& nextActivityStateChangeCallbackIDs)
+void TiledCoreAnimationDrawingArea::activityStateDidChange(OptionSet<WebCore::ActivityState::Flag> changed, ActivityStateChangeID activityStateChangeID, const Vector<CallbackID>& nextActivityStateChangeCallbackIDs)
 {
     m_nextActivityStateChangeCallbackIDs.appendVector(nextActivityStateChangeCallbackIDs);
-    m_wantsDidUpdateActivityState |= wantsDidUpdateActivityState;
+    m_activityStateChangeID = std::max(m_activityStateChangeID, activityStateChangeID);
 
     if (changed & ActivityState::IsVisible) {
         if (m_webPage.isVisible())
@@ -476,7 +526,7 @@ void TiledCoreAnimationDrawingArea::activityStateDidChange(ActivityState::Flags 
             suspendPainting();
     }
 
-    if (m_wantsDidUpdateActivityState || !m_nextActivityStateChangeCallbackIDs.isEmpty())
+    if (m_activityStateChangeID != ActivityStateChangeAsynchronous || !m_nextActivityStateChangeCallbackIDs.isEmpty())
         m_sendDidUpdateActivityStateTimer.startOneShot(0_s);
 }
 
@@ -484,14 +534,14 @@ void TiledCoreAnimationDrawingArea::didUpdateActivityStateTimerFired()
 {
     [CATransaction flush];
 
-    if (m_wantsDidUpdateActivityState)
+    if (m_activityStateChangeID != ActivityStateChangeAsynchronous)
         m_webPage.send(Messages::WebPageProxy::DidUpdateActivityState());
 
-    for (auto callbackID : m_nextActivityStateChangeCallbackIDs)
+    for (const auto& callbackID : m_nextActivityStateChangeCallbackIDs)
         m_webPage.send(Messages::WebPageProxy::VoidCallback(callbackID));
 
     m_nextActivityStateChangeCallbackIDs.clear();
-    m_wantsDidUpdateActivityState = false;
+    m_activityStateChangeID = ActivityStateChangeAsynchronous;
 }
 
 void TiledCoreAnimationDrawingArea::suspendPainting()
@@ -516,7 +566,7 @@ void TiledCoreAnimationDrawingArea::resumePainting()
     [[NSNotificationCenter defaultCenter] postNotificationName:@"NSCAViewRenderDidResumeNotification" object:nil userInfo:[NSDictionary dictionaryWithObject:m_hostingLayer.get() forKey:@"layer"]];
 }
 
-void TiledCoreAnimationDrawingArea::setViewExposedRect(std::optional<WebCore::FloatRect> viewExposedRect)
+void TiledCoreAnimationDrawingArea::setViewExposedRect(Optional<WebCore::FloatRect> viewExposedRect)
 {
     m_viewExposedRect = viewExposedRect;
     updateScrolledExposedRect();
@@ -530,7 +580,7 @@ void TiledCoreAnimationDrawingArea::updateScrolledExposedRect()
 
     m_scrolledViewExposedRect = m_viewExposedRect;
 
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     if (m_viewExposedRect) {
         ScrollOffset scrollOffset = frameView->scrollOffsetFromPosition(frameView->scrollPosition());
         m_scrolledViewExposedRect.value().moveBy(scrollOffset);
@@ -540,14 +590,14 @@ void TiledCoreAnimationDrawingArea::updateScrolledExposedRect()
     frameView->setViewExposedRect(m_scrolledViewExposedRect);
 }
 
-void TiledCoreAnimationDrawingArea::updateGeometry(const IntSize& viewSize, const IntSize& layerPosition, bool flushSynchronously, const WebCore::MachSendRight& fencePort)
+void TiledCoreAnimationDrawingArea::updateGeometry(const IntSize& viewSize, bool flushSynchronously, const WTF::MachSendRight& fencePort)
 {
     m_inUpdateGeometry = true;
 
     IntSize size = viewSize;
     IntSize contentSize = IntSize(-1, -1);
 
-    if (!m_webPage.minimumLayoutSize().width() || m_webPage.autoSizingShouldExpandToViewHeight())
+    if (!m_webPage.viewLayoutSize().width() || m_webPage.autoSizingShouldExpandToViewHeight())
         m_webPage.setSize(size);
 
     FrameView* frameView = m_webPage.mainFrameView();
@@ -557,25 +607,24 @@ void TiledCoreAnimationDrawingArea::updateGeometry(const IntSize& viewSize, cons
 
     m_webPage.layoutIfNeeded();
 
-    if (m_webPage.minimumLayoutSize().width() && frameView) {
+    if (m_webPage.viewLayoutSize().width() && frameView) {
         contentSize = frameView->autoSizingIntrinsicContentSize();
         size = contentSize;
     }
 
-    if (!m_layerTreeStateIsFrozen)
-        flushLayers();
+    flushLayers();
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
 
-    [m_hostingLayer setFrame:CGRectMake(layerPosition.width(), layerPosition.height(), viewSize.width(), viewSize.height())];
+    [m_hostingLayer setFrame:CGRectMake(0, 0, viewSize.width(), viewSize.height())];
 
     [CATransaction commit];
 
     if (flushSynchronously)
         [CATransaction flush];
 
-    m_webPage.send(Messages::DrawingAreaProxy::DidUpdateGeometry());
+    send(Messages::DrawingAreaProxy::DidUpdateGeometry());
 
     m_inUpdateGeometry = false;
 
@@ -594,7 +643,7 @@ void TiledCoreAnimationDrawingArea::setLayerHostingMode(LayerHostingMode)
     // Finally, inform the UIProcess that the context has changed.
     LayerTreeContext layerTreeContext;
     layerTreeContext.contextID = m_layerHostingContext->contextID();
-    m_webPage.send(Messages::DrawingAreaProxy::UpdateAcceleratedCompositingMode(0, layerTreeContext));
+    send(Messages::DrawingAreaProxy::UpdateAcceleratedCompositingMode(0, layerTreeContext));
 }
 
 void TiledCoreAnimationDrawingArea::setColorSpace(const ColorSpaceData& colorSpace)
@@ -641,7 +690,6 @@ void TiledCoreAnimationDrawingArea::setRootCompositingLayer(CALayer *layer)
 
     bool hadRootLayer = !!m_rootLayer;
     m_rootLayer = layer;
-    [m_rootLayer setSublayerTransform:m_transform];
 
     updateRootLayers();
 
@@ -809,7 +857,7 @@ void TiledCoreAnimationDrawingArea::commitTransientZoom(double scale, FloatPoint
     transform.scale(scale);
 
     RetainPtr<CABasicAnimation> renderViewAnimationCA = transientZoomSnapAnimationForKeyPath("transform");
-    RefPtr<PlatformCAAnimation> renderViewAnimation = PlatformCAAnimationCocoa::create(renderViewAnimationCA.get());
+    auto renderViewAnimation = PlatformCAAnimationCocoa::create(renderViewAnimationCA.get());
     renderViewAnimation->setToValue(transform);
 
     RetainPtr<CALayer> shadowCALayer;
@@ -829,7 +877,7 @@ void TiledCoreAnimationDrawingArea::commitTransientZoom(double scale, FloatPoint
             drawingArea->applyTransientZoomToPage(scale, origin);
     }];
 
-    zoomLayer->addAnimationForKey("transientZoomCommit", *renderViewAnimation);
+    zoomLayer->addAnimationForKey("transientZoomCommit", renderViewAnimation.get());
 
     if (shadowCALayer) {
         FloatRect shadowBounds = shadowLayerBoundsForFrame(frameView, scale);
@@ -840,7 +888,7 @@ void TiledCoreAnimationDrawingArea::commitTransientZoom(double scale, FloatPoint
         RetainPtr<CABasicAnimation> shadowPositionAnimation = transientZoomSnapAnimationForKeyPath("position");
         [shadowPositionAnimation setToValue:[NSValue valueWithPoint:shadowLayerPositionForFrame(frameView, constrainedOrigin)]];
         RetainPtr<CABasicAnimation> shadowPathAnimation = transientZoomSnapAnimationForKeyPath("shadowPath");
-        [shadowPathAnimation setToValue:(id)shadowPath.get()];
+        [shadowPathAnimation setToValue:(__bridge id)shadowPath.get()];
 
         [shadowCALayer addAnimation:shadowBoundsAnimation.get() forKey:@"transientZoomCommitShadowBounds"];
         [shadowCALayer addAnimation:shadowPositionAnimation.get() forKey:@"transientZoomCommitShadowPosition"];
@@ -870,7 +918,7 @@ void TiledCoreAnimationDrawingArea::applyTransientZoomToPage(double scale, Float
     unscrolledOrigin.moveBy(-unobscuredContentRect.location());
     m_webPage.scalePage(scale / m_webPage.viewScaleFactor(), roundedIntPoint(-unscrolledOrigin));
     m_transientZoomScale = 1;
-    flushLayers();
+    flushLayers(FlushType::TransientZoom);
 }
 
 void TiledCoreAnimationDrawingArea::addFence(const MachSendRight& fencePort)
@@ -878,12 +926,64 @@ void TiledCoreAnimationDrawingArea::addFence(const MachSendRight& fencePort)
     m_layerHostingContext->setFencePort(fencePort.sendRight());
 }
 
-bool TiledCoreAnimationDrawingArea::dispatchDidReachLayoutMilestone(WebCore::LayoutMilestones layoutMilestones)
+void TiledCoreAnimationDrawingArea::layerFlushRunLoopCallback()
 {
-    m_pendingNewlyReachedLayoutMilestones |= layoutMilestones;
+    flushLayers();
+}
+
+void TiledCoreAnimationDrawingArea::invalidateLayerFlushRunLoopObserver()
+{
+    m_layerFlushRunLoopObserver->invalidate();
+}
+
+void TiledCoreAnimationDrawingArea::scheduleLayerFlushRunLoopObserver()
+{
+    m_layerFlushRunLoopObserver->schedule(CFRunLoopGetCurrent());
+}
+
+bool TiledCoreAnimationDrawingArea::adjustLayerFlushThrottling(WebCore::LayerFlushThrottleState::Flags flags)
+{
+    bool wasThrottlingLayerFlushes = m_isThrottlingLayerFlushes;
+    m_isThrottlingLayerFlushes = flags & WebCore::LayerFlushThrottleState::Enabled;
+    m_isLayerFlushThrottlingTemporarilyDisabledForInteraction = flags & WebCore::LayerFlushThrottleState::UserIsInteracting;
+
+    if (wasThrottlingLayerFlushes == m_isThrottlingLayerFlushes)
+        return true;
+
+    m_layerFlushThrottlingTimer.stop();
+
+    if (m_layerTreeStateIsFrozen)
+        return true;
+
+    if (m_isThrottlingLayerFlushes) {
+        invalidateLayerFlushRunLoopObserver();
+        startLayerFlushThrottlingTimer();
+    } else
+        scheduleLayerFlushRunLoopObserver();
+
     return true;
+}
+
+bool TiledCoreAnimationDrawingArea::layerFlushThrottlingIsActive() const
+{
+    return m_isThrottlingLayerFlushes && !m_layerTreeStateIsFrozen;
+}
+
+void TiledCoreAnimationDrawingArea::startLayerFlushThrottlingTimer()
+{
+    ASSERT(m_isThrottlingLayerFlushes);
+
+    const auto throttledFlushDelay = 500_ms;
+    m_layerFlushThrottlingTimer.startOneShot(throttledFlushDelay);
+}
+
+void TiledCoreAnimationDrawingArea::layerFlushThrottlingTimerFired()
+{
+    if (m_layerTreeStateIsFrozen)
+        return;
+    scheduleLayerFlushRunLoopObserver();
 }
 
 } // namespace WebKit
 
-#endif // !PLATFORM(IOS)
+#endif // PLATFORM(MAC)

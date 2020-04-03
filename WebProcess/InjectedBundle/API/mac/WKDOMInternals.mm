@@ -26,8 +26,6 @@
 #import "config.h"
 #import "WKDOMInternals.h"
 
-#if WK_API_ENABLED
-
 #import <WebCore/Document.h>
 #import <WebCore/Element.h>
 #import <WebCore/Node.h>
@@ -40,7 +38,7 @@
 #import "WKDOMDocument.h"
 #import "WKDOMText.h"
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #import <WebCore/WAKAppKitStubs.h>
 #endif
 
@@ -51,15 +49,15 @@ static WKDOMType toWKDOMType(WebCoreType impl, DOMCache<WebCoreType, WKDOMType>&
 
 // -- Caches -- 
 
-DOMCache<WebCore::Node*, WKDOMNode *>& WKDOMNodeCache()
+DOMCache<WebCore::Node*, __unsafe_unretained WKDOMNode *>& WKDOMNodeCache()
 {
-    static NeverDestroyed<DOMCache<WebCore::Node*, WKDOMNode *>> cache;
+    static NeverDestroyed<DOMCache<WebCore::Node*, __unsafe_unretained WKDOMNode *>> cache;
     return cache;
 }
 
-DOMCache<WebCore::Range*, WKDOMRange *>& WKDOMRangeCache()
+DOMCache<WebCore::Range*, __unsafe_unretained WKDOMRange *>& WKDOMRangeCache()
 {
-    static NeverDestroyed<DOMCache<WebCore::Range*, WKDOMRange *>> cache;
+    static NeverDestroyed<DOMCache<WebCore::Range*, __unsafe_unretained WKDOMRange *>> cache;
     return cache;
 }
 
@@ -98,7 +96,7 @@ WebCore::Node* toWebCoreNode(WKDOMNode *wrapper)
 
 WKDOMNode *toWKDOMNode(WebCore::Node* impl)
 {
-    return toWKDOMType<WebCore::Node*, WKDOMNode *>(impl, WKDOMNodeCache());
+    return toWKDOMType<WebCore::Node*, __unsafe_unretained WKDOMNode *>(impl, WKDOMNodeCache());
 }
 
 WebCore::Element* toWebCoreElement(WKDOMElement *wrapper)
@@ -145,7 +143,7 @@ WebCore::Range* toWebCoreRange(WKDOMRange * wrapper)
 
 WKDOMRange *toWKDOMRange(WebCore::Range* impl)
 {
-    return toWKDOMType<WebCore::Range*, WKDOMRange *>(impl, WKDOMRangeCache());
+    return toWKDOMType<WebCore::Range*, __unsafe_unretained WKDOMRange *>(impl, WKDOMRangeCache());
 }
 
 // -- Helpers --
@@ -173,5 +171,3 @@ NSArray *toNSArray(const Vector<WebCore::IntRect>& rects)
 }
 
 } // namespace WebKit
-
-#endif // WK_API_ENABLED

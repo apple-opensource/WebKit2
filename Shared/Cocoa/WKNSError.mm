@@ -26,15 +26,13 @@
 #import "config.h"
 #import "WKNSError.h"
 
-#if WK_API_ENABLED
-
 #import "APIError.h"
 
 @implementation WKNSError
 
 - (NSObject *)_web_createTarget
 {
-    return [(NSError *)static_cast<API::Error*>(&self._apiObject)->platformError().cfError() copy];
+    return [(__bridge NSError *)static_cast<API::Error*>(&self._apiObject)->platformError().cfError() copy];
 }
 
 #pragma mark NSCopying protocol implementation
@@ -45,5 +43,3 @@
 }
 
 @end
-
-#endif // WK_API_ENABLED

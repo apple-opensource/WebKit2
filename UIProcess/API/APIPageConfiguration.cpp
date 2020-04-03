@@ -27,20 +27,21 @@
 #include "APIPageConfiguration.h"
 
 #include "APIProcessPoolConfiguration.h"
+#include "APIWebsitePolicies.h"
 #include "WebPageGroup.h"
 #include "WebPageProxy.h"
 #include "WebPreferences.h"
 #include "WebProcessPool.h"
+#include "WebURLSchemeHandler.h"
 #include "WebUserContentControllerProxy.h"
 
 #if ENABLE(APPLICATION_MANIFEST)
 #include "APIApplicationManifest.h"
 #endif
 
+namespace API {
 using namespace WebCore;
 using namespace WebKit;
-
-namespace API {
 
 Ref<PageConfiguration> PageConfiguration::create()
 {
@@ -69,16 +70,22 @@ Ref<PageConfiguration> PageConfiguration::copy() const
     copy->m_websiteDataStore = this->m_websiteDataStore;
     copy->m_sessionID = this->m_sessionID;
     copy->m_treatsSHA1SignedCertificatesAsInsecure = this->m_treatsSHA1SignedCertificatesAsInsecure;
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     copy->m_alwaysRunsAtForegroundPriority = this->m_alwaysRunsAtForegroundPriority;
+    copy->m_canShowWhileLocked = this->m_canShowWhileLocked;
+    copy->m_clickInteractionDriverForTesting = this->m_clickInteractionDriverForTesting;
 #endif
     copy->m_initialCapitalizationEnabled = this->m_initialCapitalizationEnabled;
-    copy->m_cpuLimit = this->m_cpuLimit;
+    copy->m_waitsForPaintAfterViewDidMoveToWindow = this->m_waitsForPaintAfterViewDidMoveToWindow;
+    copy->m_drawsBackground = this->m_drawsBackground;
     copy->m_controlledByAutomation = this->m_controlledByAutomation;
+    copy->m_cpuLimit = this->m_cpuLimit;
     copy->m_overrideContentSecurityPolicy = this->m_overrideContentSecurityPolicy;
 #if ENABLE(APPLICATION_MANIFEST)
     copy->m_applicationManifest = this->m_applicationManifest;
 #endif
+    for (auto& pair : this->m_urlSchemeHandlers)
+        copy->m_urlSchemeHandlers.set(pair.key, pair.value.copyRef());
 
     return copy;
 }
@@ -124,7 +131,7 @@ void PageConfiguration::setPreferences(WebPreferences* preferences)
     m_preferences = preferences;
 }
 
-WebPageProxy* PageConfiguration::relatedPage()
+WebPageProxy* PageConfiguration::relatedPage() const
 {
     return m_relatedPage.get();
 }
@@ -160,6 +167,16 @@ void PageConfiguration::setWebsiteDataStore(API::WebsiteDataStore* websiteDataSt
         m_sessionID = PAL::SessionID();
 }
 
+WebsitePolicies* PageConfiguration::defaultWebsitePolicies() const
+{
+    return m_defaultWebsitePolicies.get();
+}
+
+void PageConfiguration::setDefaultWebsitePolicies(WebsitePolicies* policies)
+{
+    m_defaultWebsitePolicies = policies;
+}
+
 PAL::SessionID PageConfiguration::sessionID()
 {
     ASSERT(!m_websiteDataStore || m_websiteDataStore->websiteDataStore().sessionID() == m_sessionID || m_sessionID == PAL::SessionID::legacyPrivateSessionID());
@@ -172,8 +189,18 @@ void PageConfiguration::setSessionID(PAL::SessionID sessionID)
     m_sessionID = sessionID;
 }
 
+RefPtr<WebKit::WebURLSchemeHandler> PageConfiguration::urlSchemeHandlerForURLScheme(const WTF::String& scheme)
+{
+    return m_urlSchemeHandlers.get(scheme);
+}
+
+void PageConfiguration::setURLSchemeHandlerForURLScheme(Ref<WebKit::WebURLSchemeHandler>&& handler, const WTF::String& scheme)
+{
+    m_urlSchemeHandlers.set(scheme, WTFMove(handler));
+}
+
 #if ENABLE(APPLICATION_MANIFEST)
-const ApplicationManifest* PageConfiguration::applicationManifest() const
+ApplicationManifest* PageConfiguration::applicationManifest() const
 {
     return m_applicationManifest.get();
 }

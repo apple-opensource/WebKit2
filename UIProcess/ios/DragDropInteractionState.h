@@ -25,20 +25,22 @@
 
 #pragma once
 
-#if ENABLE(DRAG_SUPPORT) && PLATFORM(IOS)
+#if ENABLE(DRAG_SUPPORT) && PLATFORM(IOS_FAMILY)
 
 #import "UIKitSPI.h"
 #import <WebCore/DragActions.h>
 #import <WebCore/DragData.h>
+#import <WebCore/Path.h>
 #import <WebCore/TextIndicator.h>
-#import <WebCore/URL.h>
 #import <WebCore/WebItemProviderPasteboard.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/URL.h>
 #import <wtf/Vector.h>
 
 namespace WebCore {
 struct DragItem;
+struct TextIndicatorData;
 }
 
 namespace WebKit {
@@ -48,12 +50,23 @@ struct DragSourceState {
     CGPoint adjustedOrigin { CGPointZero };
     CGRect dragPreviewFrameInRootViewCoordinates { CGRectZero };
     RetainPtr<UIImage> image;
-    std::optional<WebCore::TextIndicatorData> indicatorData;
+    Optional<WebCore::TextIndicatorData> indicatorData;
+    Optional<WebCore::Path> visiblePath;
     String linkTitle;
-    WebCore::URL linkURL;
+    URL linkURL;
     bool possiblyNeedsDragPreviewUpdate { true };
 
     NSInteger itemIdentifier { 0 };
+};
+
+struct ItemAndPreview {
+    RetainPtr<UIDragItem> item;
+    RetainPtr<UITargetedDragPreview> preview;
+};
+
+struct ItemAndPreviewProvider {
+    RetainPtr<UIDragItem> item;
+    BlockPtr<void(UITargetedDragPreview *)> provider;
 };
 
 class DragDropInteractionState {
@@ -90,9 +103,17 @@ public:
     BlockPtr<void()> takeDragCancelSetDownBlock() { return WTFMove(m_dragCancelSetDownBlock); }
     BlockPtr<void(NSArray<UIDragItem *> *)> takeAddDragItemCompletionBlock() { return WTFMove(m_addDragItemCompletionBlock); }
 
+    void setDefaultDropPreview(UIDragItem *, UITargetedDragPreview *);
+    void prepareForDelayedDropPreview(UIDragItem *, void(^provider)(UITargetedDragPreview *preview));
+    void deliverDelayedDropPreview(UIView *contentView, UIView *previewContainer, const WebCore::TextIndicatorData&);
+    void deliverDelayedDropPreview(UIView *contentView, CGRect unobscuredContentRect, NSArray<UIDragItem *> *, const Vector<WebCore::IntRect>& placeholderRects);
+    void clearAllDelayedItemPreviewProviders();
+
 private:
     void updatePreviewsForActiveDragSources();
-    std::optional<DragSourceState> activeDragSourceForItem(UIDragItem *) const;
+    Optional<DragSourceState> activeDragSourceForItem(UIDragItem *) const;
+    UITargetedDragPreview *defaultDropPreview(UIDragItem *) const;
+    BlockPtr<void(UITargetedDragPreview *)> dropPreviewProvider(UIDragItem *);
 
     CGPoint m_lastGlobalPosition { CGPointZero };
     CGPoint m_adjustedPositionForDragEnd { CGPointZero };
@@ -104,10 +125,12 @@ private:
     BlockPtr<void()> m_dragCancelSetDownBlock;
     BlockPtr<void(NSArray<UIDragItem *> *)> m_addDragItemCompletionBlock;
 
-    std::optional<DragSourceState> m_stagedDragSource;
+    Optional<DragSourceState> m_stagedDragSource;
     Vector<DragSourceState> m_activeDragSources;
+    Vector<ItemAndPreviewProvider> m_delayedItemPreviewProviders;
+    Vector<ItemAndPreview> m_defaultDropPreviews;
 };
 
 } // namespace WebKit
 
-#endif // ENABLE(DRAG_SUPPORT) && PLATFORM(IOS)
+#endif // ENABLE(DRAG_SUPPORT) && PLATFORM(IOS_FAMILY)

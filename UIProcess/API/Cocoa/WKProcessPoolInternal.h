@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,8 +25,6 @@
 
 #import "WKProcessPoolPrivate.h"
 
-#if WK_API_ENABLED
-
 #import "WKObject.h"
 #import "WebProcessPool.h"
 
@@ -36,11 +34,9 @@
 
 namespace WebKit {
 
-inline WKProcessPool *wrapper(WebProcessPool& processPool)
-{
-    ASSERT([processPool.wrapper() isKindOfClass:[WKProcessPool class]]);
-    return (WKProcessPool *)processPool.wrapper();
-}
+template<> struct WrapperTraits<WebProcessPool> {
+    using WrapperClass = WKProcessPool;
+};
 
 }
 
@@ -53,5 +49,3 @@ inline WKProcessPool *wrapper(WebProcessPool& processPool)
 @property(readonly) WKGeolocationProviderIOS *_geolocationProvider;
 #endif
 @end
-
-#endif // WK_API_ENABLED

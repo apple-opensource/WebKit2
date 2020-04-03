@@ -26,8 +26,8 @@
 #pragma once
 
 #include "APIExperimentalFeature.h"
+#include "APIInternalDebugFeature.h"
 #include "APIObject.h"
-#include "FontSmoothingLevel.h"
 #include "WebPreferencesDefinitions.h"
 #include "WebPreferencesStore.h"
 #include <wtf/HashSet.h>
@@ -35,6 +35,7 @@
 
 #define DECLARE_PREFERENCE_GETTER_AND_SETTERS(KeyUpper, KeyLower, TypeName, Type, DefaultValue, HumanReadableName, HumanReadableDescription) \
     void set##KeyUpper(const Type& value); \
+    void delete##KeyUpper(); \
     Type KeyLower() const;
 
 namespace WebKit {
@@ -60,12 +61,20 @@ public:
 
     FOR_EACH_WEBKIT_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
     FOR_EACH_WEBKIT_DEBUG_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
+    FOR_EACH_WEBKIT_INTERNAL_DEBUG_FEATURE_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
     FOR_EACH_WEBKIT_EXPERIMENTAL_FEATURE_PREFERENCE(DECLARE_PREFERENCE_GETTER_AND_SETTERS)
 
     static const Vector<RefPtr<API::Object>>& experimentalFeatures();
-    bool isEnabledForFeature(const API::ExperimentalFeature&) const;
-    void setEnabledForFeature(bool, const API::ExperimentalFeature&);
+    bool isFeatureEnabled(const API::ExperimentalFeature&) const;
+    void setFeatureEnabled(const API::ExperimentalFeature&, bool);
+    void setExperimentalFeatureEnabledForKey(const String&, bool);
     void enableAllExperimentalFeatures();
+
+    static const Vector<RefPtr<API::Object>>& internalDebugFeatures();
+    bool isFeatureEnabled(const API::InternalDebugFeature&) const;
+    void setFeatureEnabled(const API::InternalDebugFeature&, bool);
+    void setInternalDebugFeatureEnabledForKey(const String&, bool);
+    void resetAllInternalDebugFeatures();
 
     // Exposed for WebKitTestRunner use only.
     void forceUpdate() { update(); }
@@ -79,6 +88,7 @@ private:
 
     void updateStringValueForKey(const String& key, const String& value);
     void updateBoolValueForKey(const String& key, bool value);
+    void updateBoolValueForInternalDebugFeatureKey(const String& key, bool value);
     void updateBoolValueForExperimentalFeatureKey(const String& key, bool value);
     void updateUInt32ValueForKey(const String& key, uint32_t value);
     void updateDoubleValueForKey(const String& key, double value);
@@ -88,6 +98,9 @@ private:
     void platformUpdateUInt32ValueForKey(const String& key, uint32_t value);
     void platformUpdateDoubleValueForKey(const String& key, double value);
     void platformUpdateFloatValueForKey(const String& key, float value);
+
+    void deleteKey(const String& key);
+    void platformDeleteKey(const String& key);
 
     void updatePrivateBrowsingValue(bool value);
 

@@ -23,11 +23,11 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 
-#import "AssistedNodeInformation.h"
+#import "FocusedElementInformation.h"
 #import "UIKitSPI.h"
-#import "WKFormPeripheral.h"
+#import "WKFormPeripheralBase.h"
 #import "WKFormPopover.h"
 #import <UIKit/UIPickerView.h>
 
@@ -35,12 +35,13 @@ CGFloat adjustedFontSize(CGFloat textWidth, UIFont *, CGFloat initialFontSize, c
 
 @class WKContentView;
 
-@interface WKFormSelectControl : NSObject<WKFormPeripheral>
+@interface WKFormSelectControl : WKFormPeripheralBase
 - (instancetype)initWithView:(WKContentView *)view;
 @end
 
 @interface WKFormSelectControl(WKTesting)
 - (void)selectRow:(NSInteger)rowIndex inComponent:(NSInteger)componentIndex extendingSelection:(BOOL)extendingSelection;
+@property (nonatomic, readonly) NSString *selectFormPopoverTitle;
 @end
 
 @protocol WKSelectTesting
@@ -48,4 +49,4 @@ CGFloat adjustedFontSize(CGFloat textWidth, UIFont *, CGFloat initialFontSize, c
 - (void)selectRow:(NSInteger)rowIndex inComponent:(NSInteger)componentIndex extendingSelection:(BOOL)extendingSelection;
 @end
 
-#endif // PLATFORM(IOS)
+#endif // PLATFORM(IOS_FAMILY)

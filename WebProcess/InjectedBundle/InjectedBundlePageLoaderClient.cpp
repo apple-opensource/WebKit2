@@ -31,7 +31,6 @@
 #include "APIError.h"
 #include "APIURL.h"
 #include "APIURLRequest.h"
-#include "InjectedBundleBackForwardListItem.h"
 #include "InjectedBundleDOMWindowExtension.h"
 #include "InjectedBundleScriptWorld.h"
 #include "WKAPICast.h"
@@ -42,13 +41,16 @@
 #include <WebCore/SharedBuffer.h>
 #include <wtf/text/WTFString.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 InjectedBundlePageLoaderClient::InjectedBundlePageLoaderClient(const WKBundlePageLoaderClientBase* client)
 {
     initialize(client);
+#if !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED > 101400
+    // Deprecated callbacks.
+    ASSERT(!m_client.shouldGoToBackForwardListItem);
+#endif
 }
 
 void InjectedBundlePageLoaderClient::willLoadURLRequest(WebPage& page, const ResourceRequest& request, API::Object* userData)
@@ -77,18 +79,6 @@ void InjectedBundlePageLoaderClient::willLoadDataRequest(WebPage& page, const Re
     }
 
     m_client.willLoadDataRequest(toAPI(&page), toAPI(request), toAPI(data.get()), toAPI(MIMEType.impl()), toAPI(encodingName.impl()), toURLRef(unreachableURL.string().impl()), toAPI(userData), m_client.base.clientInfo);
-}
-
-bool InjectedBundlePageLoaderClient::shouldGoToBackForwardListItem(WebPage& page, InjectedBundleBackForwardListItem& item, RefPtr<API::Object>& userData)
-{
-    if (!m_client.shouldGoToBackForwardListItem)
-        return true;
-
-    WKTypeRef userDataToPass = nullptr;
-    bool result = m_client.shouldGoToBackForwardListItem(toAPI(&page), toAPI(&item), &userDataToPass, m_client.base.clientInfo);
-    userData = adoptRef(toImpl(userDataToPass));
-    
-    return result;
 }
 
 void InjectedBundlePageLoaderClient::didStartProvisionalLoadForFrame(WebPage& page, WebFrame& frame, RefPtr<API::Object>& userData)
@@ -257,7 +247,7 @@ void InjectedBundlePageLoaderClient::didLayoutForFrame(WebPage& page, WebFrame& 
     m_client.didLayoutForFrame(toAPI(&page), toAPI(&frame), m_client.base.clientInfo);
 }
 
-void InjectedBundlePageLoaderClient::didReachLayoutMilestone(WebPage& page, LayoutMilestones milestones, RefPtr<API::Object>& userData)
+void InjectedBundlePageLoaderClient::didReachLayoutMilestone(WebPage& page, OptionSet<WebCore::LayoutMilestone> milestones, RefPtr<API::Object>& userData)
 {
     if (!m_client.didLayout)
         return;
@@ -283,12 +273,12 @@ void InjectedBundlePageLoaderClient::didCancelClientRedirectForFrame(WebPage& pa
     m_client.didCancelClientRedirectForFrame(toAPI(&page), toAPI(&frame), m_client.base.clientInfo);
 }
 
-void InjectedBundlePageLoaderClient::willPerformClientRedirectForFrame(WebPage& page, WebFrame& frame, const String& url, double delay, double date)
+void InjectedBundlePageLoaderClient::willPerformClientRedirectForFrame(WebPage& page, WebFrame& frame, const String& url, double delay, WallTime date)
 {
     if (!m_client.willPerformClientRedirectForFrame)
         return;
 
-    m_client.willPerformClientRedirectForFrame(toAPI(&page), toAPI(&frame), toURLRef(url.impl()), delay, date, m_client.base.clientInfo);
+    m_client.willPerformClientRedirectForFrame(toAPI(&page), toAPI(&frame), toURLRef(url.impl()), delay, date.secondsSinceEpoch().seconds(), m_client.base.clientInfo);
 }
 
 void InjectedBundlePageLoaderClient::didHandleOnloadEventsForFrame(WebPage& page, WebFrame& frame)
@@ -303,9 +293,18 @@ void InjectedBundlePageLoaderClient::globalObjectIsAvailableForFrame(WebPage& pa
 {
     if (!m_client.globalObjectIsAvailableForFrame)
         return;
-    
+
     RefPtr<InjectedBundleScriptWorld> injectedWorld = InjectedBundleScriptWorld::getOrCreate(world);
     m_client.globalObjectIsAvailableForFrame(toAPI(&page), toAPI(&frame), toAPI(injectedWorld.get()), m_client.base.clientInfo);
+}
+
+void InjectedBundlePageLoaderClient::willInjectUserScriptForFrame(WebPage& page, WebFrame& frame, DOMWrapperWorld& world)
+{
+    if (!m_client.willInjectUserScriptForFrame)
+        return;
+
+    RefPtr<InjectedBundleScriptWorld> injectedWorld = InjectedBundleScriptWorld::getOrCreate(world);
+    m_client.willInjectUserScriptForFrame(toAPI(&page), toAPI(&frame), toAPI(injectedWorld.get()), m_client.base.clientInfo);
 }
 
 void InjectedBundlePageLoaderClient::willDisconnectDOMWindowExtensionFromGlobalObject(WebPage& page, DOMWindowExtension* coreExtension)
@@ -354,23 +353,18 @@ void InjectedBundlePageLoaderClient::featuresUsedInPage(WebPage& page, const Vec
     return m_client.featuresUsedInPage(toAPI(&page), toAPI(API::Array::createStringArray(features).ptr()), m_client.base.clientInfo);
 }
 
-String InjectedBundlePageLoaderClient::userAgentForURL(WebFrame& frame, const URL& url) const
+OptionSet<WebCore::LayoutMilestone> InjectedBundlePageLoaderClient::layoutMilestones() const
 {
-    if (!m_client.userAgentForURL)
-        return String();
-    WKStringRef userAgent = m_client.userAgentForURL(toAPI(&frame), toAPI(API::URL::create(url).ptr()), m_client.base.clientInfo);
-    if (!userAgent)
-        return String();
-    return toImpl(userAgent)->string();
-}
-
-LayoutMilestones InjectedBundlePageLoaderClient::layoutMilestones() const
-{
-    LayoutMilestones milestones = 0;
+    if (m_client.layoutMilestones) {
+        auto milestones = m_client.layoutMilestones(m_client.base.clientInfo);
+        return toLayoutMilestones(milestones);
+    }
+    
+    OptionSet<WebCore::LayoutMilestone> milestones;
     if (m_client.didFirstLayoutForFrame)
-        milestones |= WebCore::DidFirstLayout;
+        milestones.add(WebCore::DidFirstLayout);
     if (m_client.didFirstVisuallyNonEmptyLayoutForFrame)
-        milestones |= WebCore::DidFirstVisuallyNonEmptyLayout;
+        milestones.add(WebCore::DidFirstVisuallyNonEmptyLayout);
     return milestones;
 }
 

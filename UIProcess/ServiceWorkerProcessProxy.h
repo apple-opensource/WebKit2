@@ -25,7 +25,10 @@
 
 #pragma once
 
+#if ENABLE(SERVICE_WORKER)
+
 #include "WebProcessProxy.h"
+#include <WebCore/RegistrableDomain.h>
 
 namespace WebKit {
 class AuthenticationChallengeProxy;
@@ -33,27 +36,36 @@ struct WebPreferencesStore;
 
 class ServiceWorkerProcessProxy final : public WebProcessProxy {
 public:
-    static Ref<ServiceWorkerProcessProxy> create(WebProcessPool&, WebsiteDataStore&);
+    static Ref<ServiceWorkerProcessProxy> create(WebProcessPool&, const WebCore::RegistrableDomain&, WebsiteDataStore&);
     ~ServiceWorkerProcessProxy();
 
     static bool hasRegisteredServiceWorkers(const String& serviceWorkerDirectory);
 
-    void didReceiveAuthenticationChallenge(uint64_t pageID, uint64_t frameID, Ref<AuthenticationChallengeProxy>&&);
+    void didReceiveAuthenticationChallenge(WebCore::PageIdentifier, uint64_t frameID, Ref<AuthenticationChallengeProxy>&&);
 
-    void start(const WebPreferencesStore&, std::optional<PAL::SessionID> initialSessionID);
+    void start(const WebPreferencesStore&, Optional<PAL::SessionID> initialSessionID);
     void setUserAgent(const String&);
     void updatePreferencesStore(const WebPreferencesStore&);
 
-    uint64_t pageID() const { return m_serviceWorkerPageID; }
+    const WebCore::RegistrableDomain& registrableDomain() { return m_registrableDomain; }
+    WebCore::PageIdentifier pageID() const { return m_serviceWorkerPageID; }
 
 private:
-    // ChildProcessProxy
+    // AuxiliaryProcessProxy
     void getLaunchOptions(ProcessLauncher::LaunchOptions&) final;
 
     bool isServiceWorkerProcess() const final { return true; }
 
-    ServiceWorkerProcessProxy(WebProcessPool&, WebsiteDataStore&);
-    uint64_t m_serviceWorkerPageID { 0 };
+    ServiceWorkerProcessProxy(WebProcessPool&, const WebCore::RegistrableDomain&, WebsiteDataStore&);
+
+    WebCore::RegistrableDomain m_registrableDomain;
+    WebCore::PageIdentifier m_serviceWorkerPageID;
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ServiceWorkerProcessProxy)
+    static bool isType(const WebKit::WebProcessProxy& webProcessProxy) { return webProcessProxy.isServiceWorkerProcess(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+#endif // ENABLE(SERVICE_WORKER)

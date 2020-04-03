@@ -26,8 +26,6 @@
 #import "config.h"
 #import "WKTypeRefWrapper.h"
 
-#if WK_API_ENABLED
-
 #import "WKRetainPtr.h"
 
 @interface WKTypeRefWrapper () {
@@ -36,7 +34,9 @@
 }
 @end
 
+ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 @implementation WKTypeRefWrapper
+ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (id)initWithObject:(WKTypeRef)object
 {
@@ -55,5 +55,3 @@
 }
 
 @end
-
-#endif // WK_API_ENABLED

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,16 +25,16 @@
 
 #import "WKBackForwardList.h"
 
-#if WK_API_ENABLED
-
 #import "WKObject.h"
 #import "WebBackForwardList.h"
 
 namespace WebKit {
-inline WKBackForwardList *wrapper(WebBackForwardList& list) { ASSERT([list.wrapper() isKindOfClass:[WKBackForwardList class]]); return (WKBackForwardList *)list.wrapper(); }
+
+template<> struct WrapperTraits<WebBackForwardList> {
+    using WrapperClass = WKBackForwardList;
+};
+
 }
 
 @interface WKBackForwardList () <WKObject>
 @end
-
-#endif // WK_API_ENABLED

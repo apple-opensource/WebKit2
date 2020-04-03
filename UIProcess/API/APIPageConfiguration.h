@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef APIPageConfiguration_h
-#define APIPageConfiguration_h
+#pragma once
 
 #include "APIObject.h"
 #include "WebPreferencesStore.h"
@@ -32,12 +31,18 @@
 #include <wtf/Forward.h>
 #include <wtf/GetPtr.h>
 
+#if PLATFORM(IOS_FAMILY)
+OBJC_PROTOCOL(_UIClickInteractionDriving);
+#include <wtf/RetainPtr.h>
+#endif
+
 namespace WebKit {
 class VisitedLinkStore;
 class WebPageGroup;
 class WebPageProxy;
 class WebPreferences;
 class WebProcessPool;
+class WebURLSchemeHandler;
 class WebUserContentControllerProxy;
 }
 
@@ -45,6 +50,7 @@ namespace API {
 
 class ApplicationManifest;
 class WebsiteDataStore;
+class WebsitePolicies;
 
 class PageConfiguration : public ObjectImpl<Object::Type::PageConfiguration> {
 public:
@@ -72,7 +78,7 @@ public:
 
     WebKit::WebPreferencesStore::ValueMap& preferenceValues() { return m_preferenceValues; }
 
-    WebKit::WebPageProxy* relatedPage();
+    WebKit::WebPageProxy* relatedPage() const;
     void setRelatedPage(WebKit::WebPageProxy*);
 
     WebKit::VisitedLinkStore* visitedLinkStore();
@@ -81,6 +87,9 @@ public:
     WebsiteDataStore* websiteDataStore();
     void setWebsiteDataStore(WebsiteDataStore*);
 
+    WebsitePolicies* defaultWebsitePolicies() const;
+    void setDefaultWebsitePolicies(WebsitePolicies*);
+
     // FIXME: Once PageConfigurations *always* have a data store, get rid of the separate sessionID.
     PAL::SessionID sessionID();
     void setSessionID(PAL::SessionID);
@@ -88,18 +97,27 @@ public:
     bool treatsSHA1SignedCertificatesAsInsecure() { return m_treatsSHA1SignedCertificatesAsInsecure; }
     void setTreatsSHA1SignedCertificatesAsInsecure(bool treatsSHA1SignedCertificatesAsInsecure) { m_treatsSHA1SignedCertificatesAsInsecure = treatsSHA1SignedCertificatesAsInsecure; } 
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     bool alwaysRunsAtForegroundPriority() { return m_alwaysRunsAtForegroundPriority; }
-    void setAlwaysRunsAtForegroundPriority(bool alwaysRunsAtForegroundPriority) { m_alwaysRunsAtForegroundPriority = alwaysRunsAtForegroundPriority; } 
+    void setAlwaysRunsAtForegroundPriority(bool alwaysRunsAtForegroundPriority) { m_alwaysRunsAtForegroundPriority = alwaysRunsAtForegroundPriority; }
+    
+    bool canShowWhileLocked() const { return m_canShowWhileLocked; }
+    void setCanShowWhileLocked(bool canShowWhileLocked) { m_canShowWhileLocked = canShowWhileLocked; }
+
+    const RetainPtr<_UIClickInteractionDriving>& clickInteractionDriverForTesting() const { return m_clickInteractionDriverForTesting; }
+    void setClickInteractionDriverForTesting(RetainPtr<_UIClickInteractionDriving>&& driver) { m_clickInteractionDriverForTesting = WTFMove(driver); }
 #endif
     bool initialCapitalizationEnabled() { return m_initialCapitalizationEnabled; }
     void setInitialCapitalizationEnabled(bool initialCapitalizationEnabled) { m_initialCapitalizationEnabled = initialCapitalizationEnabled; }
 
-    std::optional<double> cpuLimit() const { return m_cpuLimit; }
+    Optional<double> cpuLimit() const { return m_cpuLimit; }
     void setCPULimit(double cpuLimit) { m_cpuLimit = cpuLimit; }
 
     bool waitsForPaintAfterViewDidMoveToWindow() const { return m_waitsForPaintAfterViewDidMoveToWindow; }
     void setWaitsForPaintAfterViewDidMoveToWindow(bool shouldSynchronize) { m_waitsForPaintAfterViewDidMoveToWindow = shouldSynchronize; }
+
+    bool drawsBackground() const { return m_drawsBackground; }
+    void setDrawsBackground(bool drawsBackground) { m_drawsBackground = drawsBackground; }
 
     bool isControlledByAutomation() const { return m_controlledByAutomation; }
     void setControlledByAutomation(bool controlledByAutomation) { m_controlledByAutomation = controlledByAutomation; }
@@ -107,10 +125,19 @@ public:
     const WTF::String& overrideContentSecurityPolicy() const { return m_overrideContentSecurityPolicy; }
     void setOverrideContentSecurityPolicy(const WTF::String& overrideContentSecurityPolicy) { m_overrideContentSecurityPolicy = overrideContentSecurityPolicy; }
 
+#if PLATFORM(COCOA)
+    const WTF::Vector<WTF::String>& additionalSupportedImageTypes() const { return m_additionalSupportedImageTypes; }
+    void setAdditionalSupportedImageTypes(WTF::Vector<WTF::String>&& additionalSupportedImageTypes) { m_additionalSupportedImageTypes = WTFMove(additionalSupportedImageTypes); }
+#endif
+
 #if ENABLE(APPLICATION_MANIFEST)
-    const ApplicationManifest* applicationManifest() const;
+    ApplicationManifest* applicationManifest() const;
     void setApplicationManifest(ApplicationManifest*);
 #endif
+
+    RefPtr<WebKit::WebURLSchemeHandler> urlSchemeHandlerForURLScheme(const WTF::String&);
+    void setURLSchemeHandlerForURLScheme(Ref<WebKit::WebURLSchemeHandler>&&, const WTF::String&);
+    const HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>>& urlSchemeHandlers() { return m_urlSchemeHandlers; }
 
 private:
 
@@ -123,27 +150,34 @@ private:
     RefPtr<WebKit::VisitedLinkStore> m_visitedLinkStore;
 
     RefPtr<WebsiteDataStore> m_websiteDataStore;
+    RefPtr<WebsitePolicies> m_defaultWebsitePolicies;
     // FIXME: We currently have to pass the session ID separately here to support the legacy private browsing session.
     // Once we get rid of it we should get rid of this configuration parameter as well.
     PAL::SessionID m_sessionID;
 
-    bool m_treatsSHA1SignedCertificatesAsInsecure = true;
-#if PLATFORM(IOS)
-    bool m_alwaysRunsAtForegroundPriority = false;
+    bool m_treatsSHA1SignedCertificatesAsInsecure { true };
+#if PLATFORM(IOS_FAMILY)
+    bool m_alwaysRunsAtForegroundPriority { false };
+    bool m_canShowWhileLocked { false };
+    RetainPtr<_UIClickInteractionDriving> m_clickInteractionDriverForTesting;
 #endif
-    bool m_initialCapitalizationEnabled = true;
-    bool m_waitsForPaintAfterViewDidMoveToWindow = true;
-    bool m_controlledByAutomation = false;
-    std::optional<double> m_cpuLimit;
+    bool m_initialCapitalizationEnabled { true };
+    bool m_waitsForPaintAfterViewDidMoveToWindow { true };
+    bool m_drawsBackground { true };
+    bool m_controlledByAutomation { false };
+    Optional<double> m_cpuLimit;
 
     WTF::String m_overrideContentSecurityPolicy;
+
+#if PLATFORM(COCOA)
+    WTF::Vector<WTF::String> m_additionalSupportedImageTypes;
+#endif
 
 #if ENABLE(APPLICATION_MANIFEST)
     RefPtr<ApplicationManifest> m_applicationManifest;
 #endif
+
+    HashMap<WTF::String, Ref<WebKit::WebURLSchemeHandler>> m_urlSchemeHandlers;
 };
 
 } // namespace API
-
-
-#endif // APIPageConfiguration_h

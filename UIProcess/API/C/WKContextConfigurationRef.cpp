@@ -78,6 +78,16 @@ void WKContextConfigurationSetIndexedDBDatabaseDirectory(WKContextConfigurationR
     toImpl(configuration)->setIndexedDBDatabaseDirectory(toImpl(indexedDBDatabaseDirectory)->string());
 }
 
+WKArrayRef WKContextConfigurationCopyCustomClassesForParameterCoder(WKContextConfigurationRef configuration)
+{
+    return toAPI(&API::Array::createStringArray(toImpl(configuration)->customClassesForParameterCoder()).leakRef());
+}
+
+void WKContextConfigurationSetCustomClassesForParameterCoder(WKContextConfigurationRef configuration, WKArrayRef classesForCoder)
+{
+    toImpl(configuration)->setCustomClassesForParameterCoder(toImpl(classesForCoder)->toStringVector());
+}
+
 WKStringRef WKContextConfigurationCopyInjectedBundlePath(WKContextConfigurationRef configuration)
 {
     return toCopiedAPI(toImpl(configuration)->injectedBundlePath());
@@ -138,6 +148,16 @@ void WKContextConfigurationSetFullySynchronousModeIsAllowedForTesting(WKContextC
     toImpl(configuration)->setFullySynchronousModeIsAllowedForTesting(allowed);
 }
 
+bool WKContextConfigurationIgnoreSynchronousMessagingTimeoutsForTesting(WKContextConfigurationRef configuration)
+{
+    return toImpl(configuration)->ignoreSynchronousMessagingTimeoutsForTesting();
+}
+
+void WKContextConfigurationSetIgnoreSynchronousMessagingTimeoutsForTesting(WKContextConfigurationRef configuration, bool ignore)
+{
+    toImpl(configuration)->setIgnoreSynchronousMessagingTimeoutsForTesting(ignore);
+}
+
 WKArrayRef WKContextConfigurationCopyOverrideLanguages(WKContextConfigurationRef configuration)
 {
     return toAPI(&API::Array::createStringArray(toImpl(configuration)->overrideLanguages()).leakRef());
@@ -157,3 +177,63 @@ void WKContextConfigurationSetShouldCaptureAudioInUIProcess(WKContextConfigurati
 {
     toImpl(configuration)->setShouldCaptureAudioInUIProcess(should);
 }
+
+bool WKContextConfigurationProcessSwapsOnNavigation(WKContextConfigurationRef configuration)
+{
+    return toImpl(configuration)->processSwapsOnNavigation();
+}
+
+void WKContextConfigurationSetProcessSwapsOnNavigation(WKContextConfigurationRef configuration, bool swaps)
+{
+    toImpl(configuration)->setProcessSwapsOnNavigation(swaps);
+}
+
+bool WKContextConfigurationPrewarmsProcessesAutomatically(WKContextConfigurationRef configuration)
+{
+    return toImpl(configuration)->isAutomaticProcessWarmingEnabled();
+}
+
+void WKContextConfigurationSetPrewarmsProcessesAutomatically(WKContextConfigurationRef configuration, bool prewarms)
+{
+    toImpl(configuration)->setIsAutomaticProcessWarmingEnabled(prewarms);
+}
+
+bool WKContextConfigurationUsesWebProcessCache(WKContextConfigurationRef configuration)
+{
+    return toImpl(configuration)->usesWebProcessCache();
+}
+
+void WKContextConfigurationSetUsesWebProcessCache(WKContextConfigurationRef configuration, bool uses)
+{
+    toImpl(configuration)->setUsesWebProcessCache(uses);
+}
+
+bool WKContextConfigurationAlwaysKeepAndReuseSwappedProcesses(WKContextConfigurationRef configuration)
+{
+    return toImpl(configuration)->alwaysKeepAndReuseSwappedProcesses();
+}
+
+void WKContextConfigurationSetAlwaysKeepAndReuseSwappedProcesses(WKContextConfigurationRef configuration, bool keepAndReuse)
+{
+    toImpl(configuration)->setAlwaysKeepAndReuseSwappedProcesses(keepAndReuse);
+}
+
+bool WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(WKContextConfigurationRef configuration)
+{
+    return toImpl(configuration)->processSwapsOnWindowOpenWithOpener();
+}
+
+void WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(WKContextConfigurationRef configuration, bool swaps)
+{
+    toImpl(configuration)->setProcessSwapsOnWindowOpenWithOpener(swaps);
+}
+
+int64_t WKContextConfigurationDiskCacheSizeOverride(WKContextConfigurationRef configuration)
+{
+    return 0;
+}
+
+void WKContextConfigurationSetDiskCacheSizeOverride(WKContextConfigurationRef configuration, int64_t size)
+{
+}
+

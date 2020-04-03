@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,22 +25,18 @@
 
 #import "WKBrowsingContextGroup.h"
 
-#if WK_API_ENABLED
-
 #import "WKObject.h"
 #import "WebPageGroup.h"
 
 namespace WebKit {
 
-inline WKBrowsingContextGroup *wrapper(WebPageGroup& pageGroup)
-{
-    ASSERT([pageGroup.wrapper() isKindOfClass:[WKBrowsingContextGroup class]]);
-    return (WKBrowsingContextGroup *)pageGroup.wrapper();
-}
+template<> struct WrapperTraits<WebPageGroup> {
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    using WrapperClass = WKBrowsingContextGroup;
+    ALLOW_DEPRECATED_DECLARATIONS_END
+};
 
 }
 
 @interface WKBrowsingContextGroup () <WKObject>
 @end
-
-#endif // WK_API_ENABLED

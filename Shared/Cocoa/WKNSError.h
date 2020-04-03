@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,22 +25,16 @@
 
 #import "WKFoundation.h"
 
-#if WK_API_ENABLED
-
 #import "APIError.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline NSError *wrapper(API::Error& error)
-{
-    ASSERT([error.wrapper() isKindOfClass:[NSError self]]);
-    return (NSError *)error.wrapper();
-}
+template<> struct WrapperTraits<API::Error> {
+    using WrapperClass = NSError;
+};
 
 }
 
 @interface WKNSError : WKObject <NSCopying>
 @end
-
-#endif // WK_API_ENABLED

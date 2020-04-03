@@ -36,14 +36,13 @@
 #include "WebProcessMessages.h"
 #include "WebProcessPool.h"
 #include "WebProtectionSpace.h"
-#include <WebCore/FileSystem.h>
 #include <WebCore/MIMETypeRegistry.h>
+#include <wtf/FileSystem.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 static uint64_t generateDownloadID()
 {
@@ -99,8 +98,23 @@ WebPageProxy* DownloadProxy::originatingPage() const
 
 void DownloadProxy::setOriginatingPage(WebPageProxy* page)
 {
-    m_originatingPage = page ? page->createWeakPtr() : nullptr;
+    m_originatingPage = makeWeakPtr(page);
 }
+
+#if PLATFORM(COCOA)
+void DownloadProxy::publishProgress(const URL& URL)
+{
+    if (!m_processPool)
+        return;
+
+    if (auto* networkProcess = m_processPool->networkProcess()) {
+        SandboxExtension::Handle handle;
+        bool createdSandboxExtension = SandboxExtension::createHandle(URL.fileSystemPath(), SandboxExtension::Type::ReadWrite, handle);
+        ASSERT_UNUSED(createdSandboxExtension, createdSandboxExtension);
+        networkProcess->send(Messages::NetworkProcess::PublishDownloadProgress(m_downloadID, URL, handle), 0);
+    }
+}
+#endif // PLATFORM(COCOA)
 
 void DownloadProxy::didStart(const ResourceRequest& request, const String& suggestedFilename)
 {
@@ -116,12 +130,12 @@ void DownloadProxy::didStart(const ResourceRequest& request, const String& sugge
     m_processPool->downloadClient().didStart(*m_processPool, *this);
 }
 
-void DownloadProxy::didReceiveAuthenticationChallenge(const AuthenticationChallenge& authenticationChallenge, uint64_t challengeID)
+void DownloadProxy::didReceiveAuthenticationChallenge(AuthenticationChallenge&& authenticationChallenge, uint64_t challengeID)
 {
     if (!m_processPool)
         return;
 
-    auto authenticationChallengeProxy = AuthenticationChallengeProxy::create(authenticationChallenge, challengeID, m_processPool->networkingProcessConnection());
+    auto authenticationChallengeProxy = AuthenticationChallengeProxy::create(WTFMove(authenticationChallenge), challengeID, makeRef(*m_processPool->networkingProcessConnection()), nullptr);
 
     m_processPool->downloadClient().didReceiveAuthenticationChallenge(*m_processPool, *this, authenticationChallengeProxy.get());
 }
@@ -134,7 +148,6 @@ void DownloadProxy::willSendRequest(ResourceRequest&& proposedRequest, const Res
     m_processPool->downloadClient().willSendRequest(*m_processPool, *this, WTFMove(proposedRequest), redirectResponse, [this, protectedThis = makeRef(*this)](ResourceRequest&& newRequest) {
         m_redirectChain.append(newRequest.url());
 
-#if USE(NETWORK_SESSION)
         if (!protectedThis->m_processPool)
             return;
 
@@ -143,7 +156,6 @@ void DownloadProxy::willSendRequest(ResourceRequest&& proposedRequest, const Res
             return;
 
         networkProcessProxy->send(Messages::NetworkProcess::ContinueWillSendRequest(protectedThis->m_downloadID, newRequest), 0);
-#endif
     });
 }
 
@@ -151,13 +163,6 @@ void DownloadProxy::didReceiveResponse(const ResourceResponse& response)
 {
     if (!m_processPool)
         return;
-
-#if !USE(NETWORK_SESSION)
-    // As per https://html.spec.whatwg.org/#as-a-download (step 2), the filename from the Content-Disposition header
-    // should override the suggested filename from the download attribute.
-    if (!m_suggestedFilename.isNull() && response.isAttachmentWithFilename())
-        m_suggestedFilename = String();
-#endif
 
     m_processPool->downloadClient().didReceiveResponse(*m_processPool, *this, response);
 }
@@ -170,18 +175,6 @@ void DownloadProxy::didReceiveData(uint64_t length)
     m_processPool->downloadClient().didReceiveData(*m_processPool, *this, length);
 }
 
-#if !USE(NETWORK_SESSION)
-void DownloadProxy::shouldDecodeSourceDataOfMIMEType(const String& mimeType, bool& result)
-{
-    result = false;
-
-    if (!m_processPool)
-        return;
-
-    result = m_processPool->downloadClient().shouldDecodeSourceDataOfMIMEType(*m_processPool, *this, mimeType);
-}
-#endif
-
 void DownloadProxy::decideDestinationWithSuggestedFilenameAsync(DownloadID downloadID, const String& suggestedFilename)
 {
     if (!m_processPool)
@@ -192,28 +185,13 @@ void DownloadProxy::decideDestinationWithSuggestedFilenameAsync(DownloadID downl
         if (!destination.isNull())
             SandboxExtension::createHandle(destination, SandboxExtension::Type::ReadWrite, sandboxExtensionHandle);
 
+        if (!m_processPool)
+            return;
+
         if (auto* networkProcess = m_processPool->networkProcess())
             networkProcess->send(Messages::NetworkProcess::ContinueDecidePendingDownloadDestination(downloadID, destination, sandboxExtensionHandle, allowOverwrite == AllowOverwrite::Yes), 0);
     });
 }
-
-#if !USE(NETWORK_SESSION)
-
-void DownloadProxy::decideDestinationWithSuggestedFilename(const String& filename, const String& mimeType, Ref<Messages::DownloadProxy::DecideDestinationWithSuggestedFilename::DelayedReply>&& reply)
-{
-    if (!m_processPool)
-        return;
-
-    String suggestedFilename = MIMETypeRegistry::appendFileExtensionIfNecessary(m_suggestedFilename.isEmpty() ? filename : m_suggestedFilename, mimeType);
-    m_processPool->downloadClient().decideDestinationWithSuggestedFilename(*m_processPool, *this, suggestedFilename, [reply = WTFMove(reply)] (AllowOverwrite allowOverwrite, String destination) {
-        SandboxExtension::Handle sandboxExtensionHandle;
-        if (!destination.isNull())
-            SandboxExtension::createHandle(destination, SandboxExtension::Type::ReadWrite, sandboxExtensionHandle);
-        reply->send(destination, allowOverwrite == AllowOverwrite::Yes, sandboxExtensionHandle);
-    });
-}
-
-#endif
 
 void DownloadProxy::didCreateDestination(const String& path)
 {
@@ -231,7 +209,7 @@ void DownloadProxy::didFinish()
     m_processPool->downloadClient().didFinish(*m_processPool, *this);
 
     // This can cause the DownloadProxy object to be deleted.
-    m_downloadProxyMap.downloadFinished(this);
+    m_downloadProxyMap.downloadFinished(*this);
 }
 
 static RefPtr<API::Data> createData(const IPC::DataReference& data)
@@ -252,7 +230,7 @@ void DownloadProxy::didFail(const ResourceError& error, const IPC::DataReference
     m_processPool->downloadClient().didFail(*m_processPool, *this, error);
 
     // This can cause the DownloadProxy object to be deleted.
-    m_downloadProxyMap.downloadFinished(this);
+    m_downloadProxyMap.downloadFinished(*this);
 }
 
 void DownloadProxy::didCancel(const IPC::DataReference& resumeData)
@@ -262,7 +240,7 @@ void DownloadProxy::didCancel(const IPC::DataReference& resumeData)
     m_processPool->downloadClient().didCancel(*m_processPool, *this);
 
     // This can cause the DownloadProxy object to be deleted.
-    m_downloadProxyMap.downloadFinished(this);
+    m_downloadProxyMap.downloadFinished(*this);
 }
 
 } // namespace WebKit

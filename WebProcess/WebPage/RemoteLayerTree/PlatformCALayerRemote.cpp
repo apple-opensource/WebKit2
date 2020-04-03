@@ -32,17 +32,17 @@
 #import "RemoteLayerTreeContext.h"
 #import "RemoteLayerTreePropertyApplier.h"
 #import <WebCore/AnimationUtilities.h>
+#import <WebCore/EventRegion.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/GraphicsLayerCA.h>
 #import <WebCore/LengthFunctions.h>
 #import <WebCore/PlatformCAFilters.h>
 #import <WebCore/PlatformCALayerCocoa.h>
 #import <WebCore/TiledBacking.h>
-#import <wtf/CurrentTime.h>
-
-using namespace WebCore;
+#import <wtf/PointerComparison.h>
 
 namespace WebKit {
+using namespace WebCore;
 
 Ref<PlatformCALayerRemote> PlatformCALayerRemote::create(LayerType layerType, PlatformCALayerClient* owner, RemoteLayerTreeContext& context)
 {
@@ -53,7 +53,7 @@ Ref<PlatformCALayerRemote> PlatformCALayerRemote::create(LayerType layerType, Pl
     else
         layer = adoptRef(new PlatformCALayerRemote(layerType, owner, context));
 
-    context.layerWasCreated(*layer, layerType);
+    context.layerDidEnterContext(*layer, layerType);
 
     return layer.releaseNonNull();
 }
@@ -63,11 +63,18 @@ Ref<PlatformCALayerRemote> PlatformCALayerRemote::create(PlatformLayer *platform
     return PlatformCALayerRemoteCustom::create(platformLayer, owner, context);
 }
 
+Ref<PlatformCALayerRemote> PlatformCALayerRemote::createForEmbeddedView(LayerType layerType, GraphicsLayer::EmbeddedViewID embeddedViewID, PlatformCALayerClient* owner, RemoteLayerTreeContext& context)
+{
+    RefPtr<PlatformCALayerRemote> layer = adoptRef(new PlatformCALayerRemote(layerType, embeddedViewID, owner, context));
+    context.layerDidEnterContext(*layer, layerType);
+    return layer.releaseNonNull();
+}
+
 Ref<PlatformCALayerRemote> PlatformCALayerRemote::create(const PlatformCALayerRemote& other, WebCore::PlatformCALayerClient* owner, RemoteLayerTreeContext& context)
 {
     auto layer = adoptRef(*new PlatformCALayerRemote(other, owner, context));
 
-    context.layerWasCreated(layer.get(), other.layerType());
+    context.layerDidEnterContext(layer.get(), other.layerType());
 
     return layer;
 }
@@ -80,6 +87,12 @@ PlatformCALayerRemote::PlatformCALayerRemote(LayerType layerType, PlatformCALaye
         m_properties.contentsScale = owner->platformCALayerDeviceScaleFactor();
         m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::ContentsScaleChanged);
     }
+}
+
+PlatformCALayerRemote::PlatformCALayerRemote(LayerType layerType, GraphicsLayer::EmbeddedViewID embeddedViewID, PlatformCALayerClient* owner, RemoteLayerTreeContext& context)
+    : PlatformCALayerRemote(layerType, owner, context)
+{
+    m_embeddedViewID = embeddedViewID;
 }
 
 PlatformCALayerRemote::PlatformCALayerRemote(const PlatformCALayerRemote& other, PlatformCALayerClient* owner, RemoteLayerTreeContext& context)
@@ -105,7 +118,19 @@ PlatformCALayerRemote::~PlatformCALayerRemote()
         downcast<PlatformCALayerRemote>(*layer).m_superlayer = nullptr;
 
     if (m_context)
-        m_context->layerWillBeDestroyed(*this);
+        m_context->layerWillLeaveContext(*this);
+}
+
+void PlatformCALayerRemote::moveToContext(RemoteLayerTreeContext& context)
+{
+    if (m_context)
+        m_context->layerWillLeaveContext(*this);
+
+    m_context = &context;
+
+    context.layerDidEnterContext(*this, layerType());
+
+    m_properties.notePropertiesChanged(m_properties.everChangedProperties);
 }
 
 void PlatformCALayerRemote::updateClonedLayerProperties(PlatformCALayerRemote& clone, bool copyContents) const
@@ -145,7 +170,7 @@ void PlatformCALayerRemote::updateClonedLayerProperties(PlatformCALayerRemote& c
 void PlatformCALayerRemote::recursiveBuildTransaction(RemoteLayerTreeContext& context, RemoteLayerTreeTransaction& transaction)
 {
     ASSERT(!m_properties.backingStore || owner());
-    ASSERT_WITH_SECURITY_IMPLICATION(&context == m_context);
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(&context == m_context);
     
     if (m_properties.backingStore && (!owner() || !owner()->platformCALayerDrawsContent())) {
         m_properties.backingStore = nullptr;
@@ -155,7 +180,7 @@ void PlatformCALayerRemote::recursiveBuildTransaction(RemoteLayerTreeContext& co
     if (m_properties.backingStore && m_properties.backingStoreAttached && m_properties.backingStore->display())
         m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::BackingStoreChanged);
 
-    if (m_properties.changedProperties != RemoteLayerTreeTransaction::NoChange) {
+    if (m_properties.changedProperties) {
         if (m_properties.changedProperties & RemoteLayerTreeTransaction::ChildrenChanged) {
             m_properties.children.resize(m_children.size());
             for (size_t i = 0; i < m_children.size(); ++i)
@@ -163,7 +188,7 @@ void PlatformCALayerRemote::recursiveBuildTransaction(RemoteLayerTreeContext& co
         }
 
         if (isPlatformCALayerRemoteCustom()) {
-            RemoteLayerTreePropertyApplier::applyProperties(platformLayer(), nullptr, m_properties, RemoteLayerTreePropertyApplier::RelatedLayerMap(), RemoteLayerBackingStore::LayerContentsType::CAMachPort);
+            RemoteLayerTreePropertyApplier::applyPropertiesToLayer(platformLayer(), nullptr, m_properties, RemoteLayerBackingStore::LayerContentsType::CAMachPort);
             didCommit();
             return;
         }
@@ -191,7 +216,9 @@ void PlatformCALayerRemote::didCommit()
 void PlatformCALayerRemote::ensureBackingStore()
 {
     ASSERT(owner());
-    
+
+    ASSERT(m_properties.backingStoreAttached);
+
     if (!m_properties.backingStore)
         m_properties.backingStore = std::make_unique<RemoteLayerBackingStore>(this);
 
@@ -203,11 +230,16 @@ void PlatformCALayerRemote::updateBackingStore()
     if (!m_properties.backingStore)
         return;
 
+    ASSERT(m_properties.backingStoreAttached);
+
     m_properties.backingStore->ensureBackingStore(m_properties.bounds.size(), m_properties.contentsScale, m_acceleratesDrawing, m_wantsDeepColorBackingStore, m_properties.opaque);
 }
 
 void PlatformCALayerRemote::setNeedsDisplayInRect(const FloatRect& rect)
 {
+    if (!m_properties.backingStoreAttached)
+        return;
+
     ensureBackingStore();
 
     // FIXME: Need to map this through contentsRect/etc.
@@ -216,6 +248,9 @@ void PlatformCALayerRemote::setNeedsDisplayInRect(const FloatRect& rect)
 
 void PlatformCALayerRemote::setNeedsDisplay()
 {
+    if (!m_properties.backingStoreAttached)
+        return;
+
     ensureBackingStore();
 
     m_properties.backingStore->setNeedsDisplay();
@@ -329,16 +364,22 @@ void PlatformCALayerRemote::adoptSublayers(PlatformCALayer& source)
 void PlatformCALayerRemote::addAnimationForKey(const String& key, PlatformCAAnimation& animation)
 {
     auto addResult = m_animations.set(key, &animation);
-    if (addResult.isNewEntry)
-        m_properties.addedAnimations.append(std::pair<String, PlatformCAAnimationRemote::Properties>(key, downcast<PlatformCAAnimationRemote>(animation).properties()));
-    else {
+    bool appendToAddedAnimations = true;
+    if (!addResult.isNewEntry) {
+        // There is already an animation for this key. If the animation has not been sent to the UI
+        // process yet, we update the key properties before it happens. Otherwise, we just append it
+        // to the list of animations to be added: PlatformCAAnimationRemote::updateLayerAnimations
+        // will actually take care of replacing the existing animation.
         for (auto& keyAnimationPair : m_properties.addedAnimations) {
             if (keyAnimationPair.first == key) {
                 keyAnimationPair.second = downcast<PlatformCAAnimationRemote>(animation).properties();
+                appendToAddedAnimations = false;
                 break;
             }
         }
     }
+    if (appendToAddedAnimations)
+        m_properties.addedAnimations.append(std::pair<String, PlatformCAAnimationRemote::Properties>(key, downcast<PlatformCAAnimationRemote>(animation).properties()));
     
     m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::AnimationsChanged);
 
@@ -368,11 +409,11 @@ static inline bool isEquivalentLayer(const PlatformCALayer* layer, GraphicsLayer
     return layerID == newLayerID;
 }
 
-void PlatformCALayerRemote::animationStarted(const String& key, CFTimeInterval beginTime)
+void PlatformCALayerRemote::animationStarted(const String& key, MonotonicTime beginTime)
 {
     auto it = m_animations.find(key);
     if (it != m_animations.end())
-        downcast<PlatformCAAnimationRemote>(*it->value).didStart(beginTime);
+        downcast<PlatformCAAnimationRemote>(*it->value).didStart(currentTimeToMediaTime(beginTime));
     
     if (m_owner)
         m_owner->platformCALayerAnimationStarted(key, beginTime);
@@ -537,13 +578,18 @@ void PlatformCALayerRemote::setUserInteractionEnabled(bool value)
     m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::UserInteractionEnabledChanged);
 }
 
-void PlatformCALayerRemote::setBackingStoreAttached(bool value)
+void PlatformCALayerRemote::setBackingStoreAttached(bool attached)
 {
-    if (m_properties.backingStoreAttached == value)
+    if (m_properties.backingStoreAttached == attached)
         return;
 
-    m_properties.backingStoreAttached = value;
+    m_properties.backingStoreAttached = attached;
     m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::BackingStoreAttachmentChanged);
+    
+    if (attached)
+        setNeedsDisplay();
+    else
+        m_properties.backingStore = nullptr;
 }
 
 bool PlatformCALayerRemote::backingStoreAttached() const
@@ -616,6 +662,11 @@ bool PlatformCALayerRemote::supportsSubpixelAntialiasedText() const
 
 void PlatformCALayerRemote::setSupportsSubpixelAntialiasedText(bool)
 {
+}
+
+bool PlatformCALayerRemote::hasContents() const
+{
+    return !!m_properties.backingStore;
 }
 
 CFTypeRef PlatformCALayerRemote::contents() const
@@ -807,7 +858,7 @@ void PlatformCALayerRemote::setShapeWindRule(WindRule windRule)
 
 bool PlatformCALayerRemote::requiresCustomAppearanceUpdateOnBoundsChange() const
 {
-    return m_properties.customAppearance == GraphicsLayer::ScrollingShadow;
+    return m_properties.customAppearance == GraphicsLayer::CustomAppearance::ScrollingShadow;
 }
 
 GraphicsLayer::CustomAppearance PlatformCALayerRemote::customAppearance() const
@@ -819,6 +870,20 @@ void PlatformCALayerRemote::updateCustomAppearance(GraphicsLayer::CustomAppearan
 {
     m_properties.customAppearance = customAppearance;
     m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::CustomAppearanceChanged);
+}
+
+void PlatformCALayerRemote::setEventRegion(const WebCore::EventRegion& eventRegion)
+{
+    if (m_properties.eventRegion == eventRegion)
+        return;
+
+    m_properties.eventRegion = eventRegion;
+    m_properties.notePropertiesChanged(RemoteLayerTreeTransaction::EventRegionChanged);
+}
+
+GraphicsLayer::EmbeddedViewID PlatformCALayerRemote::embeddedViewID() const
+{
+    return m_embeddedViewID;
 }
 
 Ref<PlatformCALayer> PlatformCALayerRemote::createCompatibleLayer(PlatformCALayer::LayerType layerType, PlatformCALayerClient* client) const

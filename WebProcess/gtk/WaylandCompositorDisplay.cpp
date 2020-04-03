@@ -31,9 +31,8 @@
 #include "WebKitWaylandClientProtocol.h"
 #include "WebPage.h"
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 std::unique_ptr<WaylandCompositorDisplay> WaylandCompositorDisplay::create(const String& displayName)
 {
@@ -45,11 +44,13 @@ std::unique_ptr<WaylandCompositorDisplay> WaylandCompositorDisplay::create(const
 
     struct wl_display* display = wl_display_connect(displayName.utf8().data());
     if (!display) {
-        WTFLogAlways("PlatformDisplayWayland initialization: failed to connect to the Wayland display: %s", displayName.utf8().data());
+        WTFLogAlways("WaylandCompositorDisplay initialization: failed to connect to the Wayland display: %s", displayName.utf8().data());
         return nullptr;
     }
 
-    return std::unique_ptr<WaylandCompositorDisplay>(new WaylandCompositorDisplay(display));
+    auto compositorDisplay = std::unique_ptr<WaylandCompositorDisplay>(new WaylandCompositorDisplay(display));
+    compositorDisplay->initialize();
+    return compositorDisplay;
 }
 
 void WaylandCompositorDisplay::bindSurfaceToPage(struct wl_surface* surface, WebPage& page)
@@ -57,13 +58,13 @@ void WaylandCompositorDisplay::bindSurfaceToPage(struct wl_surface* surface, Web
     if (!m_webkitgtk)
         return;
 
-    wl_webkitgtk_bind_surface_to_page(reinterpret_cast<struct wl_webkitgtk*>(m_webkitgtk.get()), surface, page.pageID());
+    wl_webkitgtk_bind_surface_to_page(reinterpret_cast<struct wl_webkitgtk*>(m_webkitgtk.get()), surface, page.pageID().toUInt64());
     wl_display_roundtrip(m_display);
 }
 
 WaylandCompositorDisplay::WaylandCompositorDisplay(struct wl_display* display)
+    : PlatformDisplayWayland(display, NativeDisplayOwned::Yes)
 {
-    initialize(display);
     PlatformDisplay::setSharedDisplayForCompositing(*this);
 }
 

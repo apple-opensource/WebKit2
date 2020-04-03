@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,23 +25,16 @@
 
 #import "WKNavigationData.h"
 
-#if WK_API_ENABLED
-
 #import "APINavigationData.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline WKNavigationData *wrapper(API::NavigationData& data)
-{
-    ASSERT([data.wrapper() isKindOfClass:[WKNavigationData class]]);
-
-    return (WKNavigationData *)data.wrapper();
-}
+template<> struct WrapperTraits<API::NavigationData> {
+    using WrapperClass = WKNavigationData;
+};
 
 }
 
 @interface WKNavigationData () <WKObject>
 @end
-
-#endif // WK_API_ENABLED

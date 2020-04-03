@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,18 +25,14 @@
 
 #import "WKHTTPCookieStore.h"
 
-#if WK_API_ENABLED
-
 #import "APIHTTPCookieStore.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline WKHTTPCookieStore *wrapper(API::HTTPCookieStore& cookieStore)
-{
-    ASSERT([cookieStore.wrapper() isKindOfClass:[WKHTTPCookieStore class]]);
-    return (WKHTTPCookieStore *)cookieStore.wrapper();
-}
+template<> struct WrapperTraits<API::HTTPCookieStore> {
+    using WrapperClass = WKHTTPCookieStore;
+};
 
 }
 
@@ -45,5 +41,3 @@ inline WKHTTPCookieStore *wrapper(API::HTTPCookieStore& cookieStore)
     API::ObjectStorage<API::HTTPCookieStore> _cookieStore;
 }
 @end
-
-#endif

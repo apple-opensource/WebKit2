@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,16 +42,15 @@
 #include <wtf/text/StringBuilder.h>
 
 #if PLATFORM(COCOA)
-#include <WebCore/MachSendRight.h>
+#include <wtf/MachSendRight.h>
 #endif
 
 #if PLATFORM(X11)
 #include <WebCore/PlatformDisplayX11.h>
 #endif
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 // Helper class for delaying destruction of a plug-in.
 class PluginDestructionProtector {
@@ -495,18 +494,6 @@ static NPError NPN_GetValue(NPP npp, NPNVariable variable, void *value)
             *(NPBool*)value = true;
             break;
         }
-
-#ifndef NP_NO_QUICKDRAW
-        case NPNVsupportsQuickDrawBool:
-            // We don't support the QuickDraw drawing model.
-            *(NPBool*)value = false;
-            break;
-#endif
-#ifndef NP_NO_CARBON
-       case NPNVsupportsCarbonBool:
-            *(NPBool*)value = true;
-            break;
-#endif
 #elif PLATFORM(X11)
         case NPNVxDisplay: {
             if (!npp)

@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS_THREADED)
+#if USE(COORDINATED_GRAPHICS)
 
 #include "CompositingRunLoop.h"
 #include "CoordinatedGraphicsScene.h"
@@ -39,15 +39,13 @@
 #include <wtf/ThreadSafeRefCounted.h>
 
 #if USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)
-#include <WebCore/DisplayRefreshMonitor.h>
+#include "ThreadedDisplayRefreshMonitor.h"
 #endif
 
 namespace WebKit {
 
 class CoordinatedGraphicsScene;
 class CoordinatedGraphicsSceneClient;
-class ThreadedDisplayRefreshMonitor;
-class WebPage;
 
 class ThreadedCompositor : public CoordinatedGraphicsSceneClient, public ThreadSafeRefCounted<ThreadedCompositor> {
     WTF_MAKE_NONCOPYABLE(ThreadedCompositor);
@@ -55,29 +53,23 @@ class ThreadedCompositor : public CoordinatedGraphicsSceneClient, public ThreadS
 public:
     class Client {
     public:
-        virtual void renderNextFrame() = 0;
-        virtual void commitScrollOffset(uint32_t layerID, const WebCore::IntSize& offset) = 0;
-
         virtual uint64_t nativeSurfaceHandleForCompositing() = 0;
         virtual void didDestroyGLContext() = 0;
 
+        virtual void resize(const WebCore::IntSize&) = 0;
         virtual void willRenderFrame() = 0;
         virtual void didRenderFrame() = 0;
     };
 
-    enum class ShouldDoFrameSync { No, Yes };
-
-    static Ref<ThreadedCompositor> create(Client&, WebPage&, const WebCore::IntSize&, float scaleFactor, ShouldDoFrameSync = ShouldDoFrameSync::Yes, WebCore::TextureMapper::PaintFlags = 0);
+    static Ref<ThreadedCompositor> create(Client&, ThreadedDisplayRefreshMonitor::Client&, WebCore::PlatformDisplayID, const WebCore::IntSize&, float scaleFactor, WebCore::TextureMapper::PaintFlags);
     virtual ~ThreadedCompositor();
 
-    void setNativeSurfaceHandleForCompositing(uint64_t);
     void setScaleFactor(float);
     void setScrollPosition(const WebCore::IntPoint&, float scale);
     void setViewportSize(const WebCore::IntSize&, float scale);
-    void setDrawsBackground(bool);
 
     void updateSceneState(const WebCore::CoordinatedGraphicsState&);
-    void releaseUpdateAtlases(const Vector<uint32_t>&);
+    void updateScene();
 
     void invalidate();
 
@@ -85,19 +77,18 @@ public:
 
 #if USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)
     RefPtr<WebCore::DisplayRefreshMonitor> displayRefreshMonitor(WebCore::PlatformDisplayID);
-    void requestDisplayRefreshMonitorUpdate();
-    void handleDisplayRefreshMonitorUpdate(bool hasBeenRescheduled);
 #endif
 
     void frameComplete();
 
+    void suspend();
+    void resume();
+
 private:
-    ThreadedCompositor(Client&, WebPage&, const WebCore::IntSize&, float scaleFactor, ShouldDoFrameSync, WebCore::TextureMapper::PaintFlags);
+    ThreadedCompositor(Client&, ThreadedDisplayRefreshMonitor::Client&, WebCore::PlatformDisplayID, const WebCore::IntSize&, float scaleFactor, WebCore::TextureMapper::PaintFlags);
 
     // CoordinatedGraphicsSceneClient
-    void renderNextFrame() override;
     void updateViewport() override;
-    void commitScrollOffset(uint32_t layerID, const WebCore::IntSize& offset) override;
 
     void renderLayerTree();
     void sceneUpdateFinished();
@@ -109,9 +100,9 @@ private:
     std::unique_ptr<WebCore::GLContext> m_context;
 
     uint64_t m_nativeSurfaceHandle;
-    ShouldDoFrameSync m_doFrameSync;
     WebCore::TextureMapper::PaintFlags m_paintFlags { 0 };
     bool m_inForceRepaint { false };
+    unsigned m_suspendedCount { 0 };
 
     std::unique_ptr<CompositingRunLoop> m_compositingRunLoop;
 
@@ -120,14 +111,10 @@ private:
         WebCore::IntSize viewportSize;
         WebCore::IntPoint scrollPosition;
         float scaleFactor { 1 };
-        bool drawsBackground { true };
         bool needsResize { false };
-
         Vector<WebCore::CoordinatedGraphicsState> states;
-        Vector<uint32_t> atlasesToRemove;
 
         bool clientRendersNextFrame { false };
-        bool coordinateUpdateCompletionWithClient { false };
     } m_attributes;
 
 #if USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)
@@ -137,5 +124,5 @@ private:
 
 } // namespace WebKit
 
-#endif // USE(COORDINATED_GRAPHICS_THREADED)
+#endif // USE(COORDINATED_GRAPHICS)
 

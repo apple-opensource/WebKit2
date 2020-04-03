@@ -29,9 +29,8 @@
 #include "ShareableBitmap.h"
 #include "UpdateInfo.h"
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 BackingStore::BackingStore(const IntSize& size, float deviceScaleFactor, WebPageProxy& webPageProxy)
     : m_size(size)
@@ -49,7 +48,7 @@ void BackingStore::incorporateUpdate(const UpdateInfo& updateInfo)
 {
     ASSERT(m_size == updateInfo.viewSize);
     
-    RefPtr<ShareableBitmap> bitmap = ShareableBitmap::create(updateInfo.bitmapHandle);
+    auto bitmap = ShareableBitmap::create(updateInfo.bitmapHandle);
     if (!bitmap)
         return;
 

@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 
 #include "ArgumentCoders.h"
 #include "ShareableBitmap.h"
@@ -42,13 +42,16 @@ struct InteractionInformationRequest {
     bool includeSnapshot { false };
     bool includeLinkIndicator { false };
 
+    bool linkIndicatorShouldHaveLegacyMargins { false };
+
     InteractionInformationRequest() { }
     explicit InteractionInformationRequest(WebCore::IntPoint point)
     {
         this->point = point;
     }
 
-    bool isValidForRequest(const InteractionInformationRequest&);
+    bool isValidForRequest(const InteractionInformationRequest&, int radius = 0);
+    bool isApproximatelyValidForRequest(const InteractionInformationRequest&, int radius);
 
     void encode(IPC::Encoder&) const;
     static bool decode(IPC::Decoder&, InteractionInformationRequest&);
@@ -56,4 +59,4 @@ struct InteractionInformationRequest {
 
 }
 
-#endif // PLATFORM(IOS)
+#endif // PLATFORM(IOS_FAMILY)

@@ -26,7 +26,7 @@
 #import "config.h"
 #import "RemoteWebInspectorProxy.h"
 
-#if PLATFORM(MAC) && WK_API_ENABLED
+#if PLATFORM(MAC)
 
 #import "RemoteWebInspectorProxyMessages.h"
 #import "RemoteWebInspectorUIMessages.h"
@@ -38,19 +38,27 @@
 #import "WebInspectorProxy.h"
 #import "WebPageGroup.h"
 #import "WebPageProxy.h"
+#import <SecurityInterface/SFCertificatePanel.h>
+#import <SecurityInterface/SFCertificateView.h>
+#import <WebCore/CertificateInfo.h>
 #import <wtf/text/Base64.h>
 
-using namespace WebKit;
-
-@interface WKRemoteWebInspectorProxyObjCAdapter : NSObject <WKInspectorViewControllerDelegate> {
-    RemoteWebInspectorProxy* _inspectorProxy;
+@interface WKRemoteWebInspectorProxyObjCAdapter : NSObject <NSWindowDelegate, WKInspectorViewControllerDelegate> {
+    WebKit::RemoteWebInspectorProxy* _inspectorProxy;
 }
-- (instancetype)initWithRemoteWebInspectorProxy:(RemoteWebInspectorProxy*)inspectorProxy;
+- (instancetype)initWithRemoteWebInspectorProxy:(WebKit::RemoteWebInspectorProxy*)inspectorProxy;
 @end
 
 @implementation WKRemoteWebInspectorProxyObjCAdapter
 
-- (instancetype)initWithRemoteWebInspectorProxy:(RemoteWebInspectorProxy*)inspectorProxy
+- (NSRect)window:(NSWindow *)window willPositionSheet:(NSWindow *)sheet usingRect:(NSRect)rect
+{
+    if (_inspectorProxy)
+        return NSMakeRect(0, _inspectorProxy->sheetRect().height(), _inspectorProxy->sheetRect().width(), 0);
+    return rect;
+}
+
+- (instancetype)initWithRemoteWebInspectorProxy:(WebKit::RemoteWebInspectorProxy*)inspectorProxy
 {
     if (!(self = [super init]))
         return nil;
@@ -73,6 +81,7 @@ using namespace WebKit;
 @end
 
 namespace WebKit {
+using namespace WebCore;
 
 WKWebView *RemoteWebInspectorProxy::webView() const
 {
@@ -83,10 +92,11 @@ WebPageProxy* RemoteWebInspectorProxy::platformCreateFrontendPageAndWindow()
 {
     m_objCAdapter = adoptNS([[WKRemoteWebInspectorProxyObjCAdapter alloc] initWithRemoteWebInspectorProxy:this]);
 
-    m_inspectorView = adoptNS([[WKInspectorViewController alloc] initWithInspectedPage:nil]);
+    m_inspectorView = adoptNS([[WKInspectorViewController alloc] initWithInspectedPage:nullptr]);
     [m_inspectorView.get() setDelegate:m_objCAdapter.get()];
 
-    m_window = WebInspectorProxy::createFrontendWindow(NSZeroRect);
+    m_window = WebInspectorProxy::createFrontendWindow(NSZeroRect, WebInspectorProxy::InspectionTargetType::Remote);
+    [m_window setDelegate:m_objCAdapter.get()];
     [m_window setFrameAutosaveName:@"WKRemoteWebInspectorWindowFrame"];
 
     NSView *contentView = m_window.get().contentView;
@@ -111,6 +121,11 @@ void RemoteWebInspectorProxy::platformCloseFrontendPageAndWindow()
 
     if (m_objCAdapter)
         m_objCAdapter = nil;
+}
+
+void RemoteWebInspectorProxy::platformResetState()
+{
+    [NSWindow removeFrameUsingName:[m_window frameAutosaveName]];
 }
 
 void RemoteWebInspectorProxy::platformBringToFront()
@@ -178,8 +193,9 @@ void RemoteWebInspectorProxy::platformSave(const String& suggestedURL, const Str
         saveToURL(panel.URL);
     };
 
-    if (m_window)
-        [panel beginSheetModalForWindow:m_window.get() completionHandler:completionHandler];
+    NSWindow *window = m_window ? m_window.get() : [NSApp keyWindow];
+    if (window)
+        [panel beginSheetModalForWindow:window completionHandler:completionHandler];
     else
         completionHandler([panel runModal]);
 }
@@ -204,6 +220,11 @@ void RemoteWebInspectorProxy::platformAppend(const String& suggestedURL, const S
     inspectorPage->process().send(Messages::RemoteWebInspectorUI::DidAppend([actualURL absoluteString]), inspectorPage->pageID());
 }
 
+void RemoteWebInspectorProxy::platformSetSheetRect(const FloatRect& rect)
+{
+    m_sheetRect = rect;
+}
+
 void RemoteWebInspectorProxy::platformStartWindowDrag()
 {
     webView()->_page->startWindowDrag();
@@ -212,6 +233,27 @@ void RemoteWebInspectorProxy::platformStartWindowDrag()
 void RemoteWebInspectorProxy::platformOpenInNewTab(const String& url)
 {
     [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
+}
+
+void RemoteWebInspectorProxy::platformShowCertificate(const CertificateInfo& certificateInfo)
+{
+    ASSERT(!certificateInfo.isEmpty());
+
+    RetainPtr<SFCertificatePanel> certificatePanel = adoptNS([[SFCertificatePanel alloc] init]);
+
+    ASSERT(m_window);
+#if HAVE(SEC_TRUST_SERIALIZATION)
+    [certificatePanel beginSheetForWindow:m_window.get() modalDelegate:nil didEndSelector:NULL contextInfo:nullptr trust:certificateInfo.trust() showGroup:YES];
+#else
+    [certificatePanel beginSheetForWindow:m_window.get() modalDelegate:nil didEndSelector:NULL contextInfo:nullptr certificates:(NSArray *)certificateInfo.certificateChain() showGroup:YES];
+#endif
+
+    // This must be called after the trust panel has been displayed, because the certificateView doesn't exist beforehand.
+    SFCertificateView *certificateView = [certificatePanel certificateView];
+    [certificateView setDisplayTrust:YES];
+    [certificateView setEditableTrust:NO];
+    [certificateView setDisplayDetails:YES];
+    [certificateView setDetailsDisclosed:YES];
 }
 
 } // namespace WebKit

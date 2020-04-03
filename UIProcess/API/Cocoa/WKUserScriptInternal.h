@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,17 @@
 
 #import "WKUserScriptPrivate.h"
 
-#if WK_API_ENABLED
-
 #import "APIUserScript.h"
 
-namespace API {
+namespace WebKit {
 
-inline WKUserScript *wrapper(UserScript& userScript)
-{
-    ASSERT([userScript.wrapper() isKindOfClass:[WKUserScript class]]);
-    return (WKUserScript *)userScript.wrapper();
+template<> struct WrapperTraits<API::UserScript> {
+    using WrapperClass = WKUserScript;
+};
+
 }
+
+namespace API {
 
 inline WebCore::UserScriptInjectionTime toWebCoreUserScriptInjectionTime(WKUserScriptInjectionTime injectionTime)
 {
@@ -72,5 +72,3 @@ inline WKUserScriptInjectionTime toWKUserScriptInjectionTime(WebCore::UserScript
     API::ObjectStorage<API::UserScript> _userScript;
 }
 @end
-
-#endif

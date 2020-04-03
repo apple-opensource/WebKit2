@@ -26,100 +26,136 @@
 #import "config.h"
 #import "_WKAttachment.h"
 
-#if WK_API_ENABLED
-
 #import "APIAttachment.h"
 #import "WKErrorPrivate.h"
 #import "_WKAttachmentInternal.h"
-#import <WebCore/AttachmentTypes.h>
+#import <WebCore/MIMETypeRegistry.h>
 #import <WebCore/SharedBuffer.h>
 #import <wtf/BlockPtr.h>
 
-using namespace WebKit;
+#if PLATFORM(IOS_FAMILY)
+#import <MobileCoreServices/MobileCoreServices.h>
+#endif
+
+static const NSInteger UnspecifiedAttachmentErrorCode = 1;
+static const NSInteger InvalidAttachmentErrorCode = 2;
 
 @implementation _WKAttachmentDisplayOptions : NSObject
+@end
 
-- (instancetype)init
+@implementation _WKAttachmentInfo {
+    RetainPtr<NSFileWrapper> _fileWrapper;
+    RetainPtr<NSString> _mimeType;
+    RetainPtr<NSString> _utiType;
+    RetainPtr<NSString> _filePath;
+}
+
+- (instancetype)initWithFileWrapper:(NSFileWrapper *)fileWrapper filePath:(NSString *)filePath mimeType:(NSString *)mimeType utiType:(NSString *)utiType
 {
-    if (self = [super init])
-        _mode = _WKAttachmentDisplayModeAuto;
+    if (!(self = [super init]))
+        return nil;
 
+    _fileWrapper = fileWrapper;
+    _filePath = filePath;
+    _mimeType = mimeType;
+    _utiType = utiType;
     return self;
 }
 
-- (WebCore::AttachmentDisplayOptions)coreDisplayOptions
+- (NSData *)data
 {
-    WebCore::AttachmentDisplayMode mode;
-    switch (self.mode) {
-    case _WKAttachmentDisplayModeAuto:
-        mode = WebCore::AttachmentDisplayMode::Auto;
-        break;
-    case _WKAttachmentDisplayModeAsIcon:
-        mode = WebCore::AttachmentDisplayMode::AsIcon;
-        break;
-    case _WKAttachmentDisplayModeInPlace:
-        mode = WebCore::AttachmentDisplayMode::InPlace;
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-        mode = WebCore::AttachmentDisplayMode::Auto;
+    if (![_fileWrapper isRegularFile]) {
+        // FIXME: Handle attachments backed by NSFileWrappers that represent directories.
+        return nil;
     }
-    return { mode };
+
+    return [_fileWrapper regularFileContents];
+}
+
+- (NSString *)name
+{
+    if ([_fileWrapper filename].length)
+        return [_fileWrapper filename];
+
+    return [_fileWrapper preferredFilename];
+}
+
+- (NSString *)filePath
+{
+    return _filePath.get();
+}
+
+- (NSFileWrapper *)fileWrapper
+{
+    return _fileWrapper.get();
+}
+
+- (NSString *)contentType
+{
+    if ([_mimeType length])
+        return _mimeType.get();
+
+    return _utiType.get();
 }
 
 @end
 
 @implementation _WKAttachment
 
+- (void)dealloc
+{
+    _attachment->~Attachment();
+
+    [super dealloc];
+}
+
 - (API::Object&)_apiObject
 {
     return *_attachment;
 }
 
-- (BOOL)isEqual:(id)object
+- (_WKAttachmentInfo *)info
 {
-    return [object isKindOfClass:[_WKAttachment class]] && [self.uniqueIdentifier isEqual:[(_WKAttachment *)object uniqueIdentifier]];
+    if (!_attachment->isValid())
+        return nil;
+
+    return [[[_WKAttachmentInfo alloc] initWithFileWrapper:_attachment->fileWrapper() filePath:_attachment->filePath() mimeType:_attachment->mimeType() utiType:_attachment->utiType()] autorelease];
 }
 
-- (void)requestData:(void(^)(NSData *, NSError *))completionHandler
+- (void)requestInfo:(void(^)(_WKAttachmentInfo *, NSError *))completionHandler
 {
-    _attachment->requestData([ capturedBlock = makeBlockPtr(completionHandler) ] (RefPtr<WebCore::SharedBuffer> buffer, CallbackBase::Error error) {
+    completionHandler(self.info, nil);
+}
+
+- (void)setFileWrapper:(NSFileWrapper *)fileWrapper contentType:(NSString *)contentType completion:(void (^)(NSError *))completionHandler
+{
+    if (!_attachment->isValid()) {
+        if (completionHandler)
+            completionHandler([NSError errorWithDomain:WKErrorDomain code:InvalidAttachmentErrorCode userInfo:nil]);
+        return;
+    }
+
+    // This file path member is only populated when the attachment is generated upon dropping files. When data is specified via NSFileWrapper
+    // from the SPI client, the corresponding file path of the data is unknown, if it even exists at all.
+    _attachment->setFilePath({ });
+    _attachment->setFileWrapperAndUpdateContentType(fileWrapper, contentType);
+    _attachment->updateAttributes([capturedBlock = makeBlockPtr(completionHandler)] (auto error) {
         if (!capturedBlock)
             return;
 
-        if (buffer && error == CallbackBase::Error::None)
-            capturedBlock(buffer->createNSData().autorelease(), nil);
-        else
-            capturedBlock(nil, [NSError errorWithDomain:WKErrorDomain code:1 userInfo:nil]);
-    });
-}
-
-- (void)setDisplayOptions:(_WKAttachmentDisplayOptions *)options completion:(void(^)(NSError *))completionHandler
-{
-    auto coreOptions = options ? options.coreDisplayOptions : WebCore::AttachmentDisplayOptions { };
-    _attachment->setDisplayOptions(coreOptions, [capturedBlock = makeBlockPtr(completionHandler)] (CallbackBase::Error error) {
-        if (!capturedBlock)
-            return;
-
-        if (error == CallbackBase::Error::None)
+        if (error == WebKit::CallbackBase::Error::None)
             capturedBlock(nil);
         else
-            capturedBlock([NSError errorWithDomain:WKErrorDomain code:1 userInfo:nil]);
+            capturedBlock([NSError errorWithDomain:WKErrorDomain code:UnspecifiedAttachmentErrorCode userInfo:nil]);
     });
 }
 
 - (void)setData:(NSData *)data newContentType:(NSString *)newContentType newFilename:(NSString *)newFilename completion:(void(^)(NSError *))completionHandler
 {
-    auto buffer = WebCore::SharedBuffer::create(data);
-    _attachment->setDataAndContentType(buffer.get(), newContentType, newFilename, [capturedBlock = makeBlockPtr(completionHandler), capturedBuffer = buffer.copyRef()] (CallbackBase::Error error) {
-        if (!capturedBlock)
-            return;
-
-        if (error == CallbackBase::Error::None)
-            capturedBlock(nil);
-        else
-            capturedBlock([NSError errorWithDomain:WKErrorDomain code:1 userInfo:nil]);
-    });
+    auto fileWrapper = adoptNS([[NSFileWrapper alloc] initRegularFileWithContents:data]);
+    if (newFilename)
+        [fileWrapper setPreferredFilename:newFilename];
+    [self setFileWrapper:fileWrapper.get() contentType:newContentType completion:completionHandler];
 }
 
 - (NSString *)uniqueIdentifier
@@ -127,16 +163,14 @@ using namespace WebKit;
     return _attachment->identifier();
 }
 
-- (NSUInteger)hash
-{
-    return [self.uniqueIdentifier hash];
-}
-
 - (NSString *)description
 {
-    return [NSString stringWithFormat:@"<%@ id='%@'>", [self class], self.uniqueIdentifier];
+    return [NSString stringWithFormat:@"<%@ %p id='%@'>", [self class], self, self.uniqueIdentifier];
+}
+
+- (BOOL)isConnected
+{
+    return _attachment->insertionState() == API::Attachment::InsertionState::Inserted;
 }
 
 @end
-
-#endif // WK_API_ENABLED

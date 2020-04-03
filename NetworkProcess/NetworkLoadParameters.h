@@ -23,13 +23,15 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NetworkLoadParameters_h
-#define NetworkLoadParameters_h
+#pragma once
 
+#include "NetworkActivityTracker.h"
 #include <WebCore/BlobDataFileReference.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/ResourceLoaderOptions.h>
 #include <WebCore/ResourceRequest.h>
 #include <pal/SessionID.h>
+#include <wtf/ProcessID.h>
 
 namespace WebKit {
 
@@ -37,25 +39,22 @@ enum class PreconnectOnly { No, Yes };
 
 class NetworkLoadParameters {
 public:
-    uint64_t webPageID { 0 };
+    WebCore::PageIdentifier webPageID;
     uint64_t webFrameID { 0 };
+    WTF::ProcessID parentPID { 0 };
     PAL::SessionID sessionID { PAL::SessionID::emptySessionID() };
     WebCore::ResourceRequest request;
-    WebCore::ContentSniffingPolicy contentSniffingPolicy { WebCore::SniffContent };
+    WebCore::ContentSniffingPolicy contentSniffingPolicy { WebCore::ContentSniffingPolicy::SniffContent };
     WebCore::ContentEncodingSniffingPolicy contentEncodingSniffingPolicy { WebCore::ContentEncodingSniffingPolicy::Sniff };
     WebCore::StoredCredentialsPolicy storedCredentialsPolicy { WebCore::StoredCredentialsPolicy::DoNotUse };
     WebCore::ClientCredentialPolicy clientCredentialPolicy { WebCore::ClientCredentialPolicy::CannotAskClientForCredentials };
-    bool shouldFollowRedirects { true };
     bool shouldClearReferrerOnHTTPSToHTTPRedirect { true };
-    bool defersLoading { false };
-    bool isMainFrameNavigation { false };
     bool needsCertificateInfo { false };
-#if USE(NETWORK_SESSION)
+    bool isMainFrameNavigation { false };
+    bool isMainResourceNavigationForAnyFrame { false };
     Vector<RefPtr<WebCore::BlobDataFileReference>> blobFileReferences;
-#endif
     PreconnectOnly shouldPreconnectOnly { PreconnectOnly::No };
+    Optional<NetworkActivityTracker> networkActivityTracker;
 };
 
 } // namespace WebKit
-
-#endif // NetworkLoadParameters_h

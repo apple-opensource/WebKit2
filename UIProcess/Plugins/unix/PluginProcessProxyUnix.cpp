@@ -32,9 +32,9 @@
 
 #include "PluginProcessCreationParameters.h"
 #include "ProcessExecutablePath.h"
-#include <WebCore/FileSystem.h>
 #include <WebCore/PlatformDisplay.h>
 #include <sys/wait.h>
+#include <wtf/FileSystem.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
@@ -47,19 +47,13 @@
 #include "Module.h"
 #endif
 
+namespace WebKit {
 using namespace WebCore;
 
-namespace WebKit {
-
-void PluginProcessProxy::platformGetLaunchOptions(ProcessLauncher::LaunchOptions& launchOptions, const PluginProcessAttributes& pluginProcessAttributes)
+void PluginProcessProxy::platformGetLaunchOptionsWithAttributes(ProcessLauncher::LaunchOptions& launchOptions, const PluginProcessAttributes& pluginProcessAttributes)
 {
     launchOptions.processType = ProcessLauncher::ProcessType::Plugin64;
-
     launchOptions.extraInitializationData.add("plugin-path", pluginProcessAttributes.moduleInfo.path);
-#if PLATFORM(GTK)
-    if (pluginProcessAttributes.moduleInfo.requiresGtk2)
-        launchOptions.extraInitializationData.add("requires-gtk2", emptyString());
-#endif
 }
 
 void PluginProcessProxy::platformInitializePluginProcess(PluginProcessCreationParameters&)
@@ -82,20 +76,8 @@ bool PluginProcessProxy::scanPlugin(const String& pluginPath, RawPluginMetaData&
     String pluginProcessPath = executablePathOfPluginProcess();
 
 #if PLATFORM(GTK)
-    bool requiresGtk2 = pluginRequiresGtk2(pluginPath);
-    if (requiresGtk2) {
-#if PLATFORM(WAYLAND)
-        if (PlatformDisplay::sharedDisplay().type() == PlatformDisplay::Type::Wayland)
-            return false;
-#endif
-#if ENABLE(PLUGIN_PROCESS_GTK2)
-        pluginProcessPath.append('2');
-        if (!FileSystem::fileExists(pluginProcessPath))
-            return false;
-#else
+    if (pluginRequiresGtk2(pluginPath))
         return false;
-#endif
-    }
 #endif
 
     CString binaryPath = FileSystem::fileSystemRepresentation(pluginProcessPath);
@@ -138,8 +120,7 @@ bool PluginProcessProxy::scanPlugin(const String& pluginPath, RawPluginMetaData&
         return false;
     }
 
-    Vector<String> lines;
-    String::fromUTF8(stdOut.get()).split(UChar('\n'), true, lines);
+    Vector<String> lines = String::fromUTF8(stdOut.get()).splitAllowingEmptyEntries('\n');
 
     if (lines.size() < 3) {
         WTFLogAlways("Error scanning plugin %s, too few lines of output provided", argv[2]);
@@ -149,9 +130,6 @@ bool PluginProcessProxy::scanPlugin(const String& pluginPath, RawPluginMetaData&
     result.name.swap(lines[0]);
     result.description.swap(lines[1]);
     result.mimeDescription.swap(lines[2]);
-#if PLATFORM(GTK)
-    result.requiresGtk2 = requiresGtk2;
-#endif
     return !result.mimeDescription.isEmpty();
 }
 #endif // PLUGIN_ARCHITECTURE(UNIX)

@@ -26,9 +26,9 @@
 #include "config.h"
 #include "AcceleratedBackingStoreX11.h"
 
-#if USE(REDIRECTED_XCOMPOSITE_WINDOW)
+#if PLATFORM(X11)
 
-#include "DrawingAreaProxyImpl.h"
+#include "DrawingAreaProxyCoordinatedGraphics.h"
 #include "LayerTreeContext.h"
 #include "WebPageProxy.h"
 #include <WebCore/CairoUtilities.h>
@@ -42,16 +42,15 @@
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 
+namespace WebKit {
 using namespace WebCore;
 
-namespace WebKit {
-
-static std::optional<int> s_damageEventBase;
-static std::optional<int> s_damageErrorBase;
+static Optional<int> s_damageEventBase;
+static Optional<int> s_damageErrorBase;
 
 class XDamageNotifier {
     WTF_MAKE_NONCOPYABLE(XDamageNotifier);
-    friend class NeverDestroyed<XDamageNotifier>;
+    friend NeverDestroyed<XDamageNotifier>;
 public:
     static XDamageNotifier& singleton()
     {
@@ -158,7 +157,7 @@ void AcceleratedBackingStoreX11::update(const LayerTreeContext& layerTreeContext
     if (!pixmap)
         return;
 
-    DrawingAreaProxyImpl* drawingArea = static_cast<DrawingAreaProxyImpl*>(m_webPage.drawingArea());
+    auto* drawingArea = static_cast<DrawingAreaProxyCoordinatedGraphics*>(m_webPage.drawingArea());
     if (!drawingArea)
         return;
 
@@ -187,7 +186,6 @@ bool AcceleratedBackingStoreX11::paint(cairo_t* cr, const IntRect& clipRect)
         return false;
 
     cairo_save(cr);
-    AcceleratedBackingStore::paint(cr, clipRect);
 
     // The surface can be modified by the web process at any time, so we mark it
     // as dirty to ensure we always render the updated contents as soon as possible.
@@ -204,4 +202,4 @@ bool AcceleratedBackingStoreX11::paint(cairo_t* cr, const IntRect& clipRect)
 
 } // namespace WebKit
 
-#endif // USE(REDIRECTED_XCOMPOSITE_WINDOW)
+#endif // PLATFORM(X11)

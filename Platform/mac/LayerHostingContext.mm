@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,11 +26,9 @@
 #import "config.h"
 #import "LayerHostingContext.h"
 
-#import <WebCore/MachSendRight.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
-
-using namespace WebCore;
+#import <wtf/MachSendRight.h>
 
 namespace WebKit {
 
@@ -52,24 +50,45 @@ std::unique_ptr<LayerHostingContext> LayerHostingContext::createForPort(const Ma
 }
 
 #if HAVE(OUT_OF_PROCESS_LAYER_HOSTING)
-std::unique_ptr<LayerHostingContext> LayerHostingContext::createForExternalHostingProcess()
+std::unique_ptr<LayerHostingContext> LayerHostingContext::createForExternalHostingProcess(const LayerHostingContextOptions& options)
 {
     auto layerHostingContext = std::make_unique<LayerHostingContext>();
     layerHostingContext->m_layerHostingMode = LayerHostingMode::OutOfProcess;
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
     // Use a very large display ID to ensure that the context is never put on-screen 
     // without being explicitly parented. See <rdar://problem/16089267> for details.
     layerHostingContext->m_context = [CAContext remoteContextWithOptions:@{
+        kCAContextSecure: @(options.canShowWhileLocked),
+#if HAVE(CORE_ANIMATION_RENDER_SERVER)
         kCAContextIgnoresHitTest : @YES,
-        kCAContextDisplayId : @10000 }];
+        kCAContextDisplayId : @10000
+#endif
+    }];
+#elif !PLATFORM(MACCATALYST) && ENABLE(WEBPROCESS_WINDOWSERVER_BLOCKING)
+    [CAContext setAllowsCGSConnections:NO];
+    layerHostingContext->m_context = [CAContext remoteContextWithOptions:@{
+        kCAContextCIFilterBehavior :  @"ignore",
+    }];
 #else
-    layerHostingContext->m_context = [CAContext contextWithCGSConnection:CGSMainConnectionID() options:@{ kCAContextCIFilterBehavior : @"ignore" }];
+    layerHostingContext->m_context = [CAContext contextWithCGSConnection:CGSMainConnectionID() options:@{
+        kCAContextCIFilterBehavior : @"ignore",
+    }];
 #endif
     
     return layerHostingContext;
 }
+
+#if PLATFORM(MAC)
+std::unique_ptr<LayerHostingContext> LayerHostingContext::createForExternalPluginHostingProcess()
+{
+    auto layerHostingContext = std::make_unique<LayerHostingContext>();
+    layerHostingContext->m_layerHostingMode = LayerHostingMode::OutOfProcess;
+    layerHostingContext->m_context = [CAContext contextWithCGSConnection:CGSMainConnectionID() options:@{ kCAContextCIFilterBehavior : @"ignore" }];
+    return layerHostingContext;
+}
 #endif
+#endif // HAVE(OUT_OF_PROCESS_LAYER_HOSTING)
 
 LayerHostingContext::LayerHostingContext()
 {
@@ -89,7 +108,7 @@ CALayer *LayerHostingContext::rootLayer() const
     return [m_context layer];
 }
 
-uint32_t LayerHostingContext::contextID() const
+LayerHostingContextID LayerHostingContext::contextID() const
 {
     return [m_context contextId];
 }

@@ -26,8 +26,6 @@
 #import "config.h"
 #import "WKRemoteObjectCoder.h"
 
-#if WK_API_ENABLED
-
 #import "APIArray.h"
 #import "APIData.h"
 #import "APIDictionary.h"
@@ -179,7 +177,7 @@ static void encodeInvocationArguments(WKRemoteObjectEncoder *encoder, NSInvocati
         }
 
         // long
-        case 'q': {
+        case 'l': {
             long value;
             [invocation getArgument:&value atIndex:i];
 
@@ -188,8 +186,26 @@ static void encodeInvocationArguments(WKRemoteObjectEncoder *encoder, NSInvocati
         }
 
         // unsigned long
-        case 'Q': {
+        case 'L': {
             unsigned long value;
+            [invocation getArgument:&value atIndex:i];
+
+            encodeToObjectStream(encoder, @(value));
+            break;
+        }
+
+        // long long
+        case 'q': {
+            long long value;
+            [invocation getArgument:&value atIndex:i];
+
+            encodeToObjectStream(encoder, @(value));
+            break;
+        }
+
+        // unsigned long long
+        case 'Q': {
+            unsigned long long value;
             [invocation getArgument:&value atIndex:i];
 
             encodeToObjectStream(encoder, @(value));
@@ -385,7 +401,7 @@ static NSString *escapeKey(NSString *key)
     const API::Array* _objectStream;
     size_t _objectStreamPosition;
 
-    const HashSet<Class>* _allowedClasses;
+    const HashSet<CFTypeRef>* _allowedClasses;
 }
 
 - (id)initWithInterface:(_WKRemoteObjectInterface *)interface rootObjectDictionary:(const API::Dictionary*)rootObjectDictionary replyToSelector:(SEL)replyToSelector
@@ -410,7 +426,7 @@ static NSString *escapeKey(NSString *key)
     switch (*type) {
     // int
     case 'i':
-        *static_cast<int*>(data) = [decodeObjectFromObjectStream(self, { [NSNumber class] }) intValue];
+        *static_cast<int*>(data) = [decodeObjectFromObjectStream(self, { (__bridge CFTypeRef)[NSNumber class] }) intValue];
         break;
 
     default:
@@ -433,9 +449,9 @@ static NSString *escapeKey(NSString *key)
     return [self decodeObjectOfClasses:nil forKey:key];
 }
 
-static id decodeObject(WKRemoteObjectDecoder *, const API::Dictionary*, const HashSet<Class>& allowedClasses);
+static id decodeObject(WKRemoteObjectDecoder *, const API::Dictionary*, const HashSet<CFTypeRef>& allowedClasses);
 
-static id decodeObjectFromObjectStream(WKRemoteObjectDecoder *decoder, const HashSet<Class>& allowedClasses)
+static id decodeObjectFromObjectStream(WKRemoteObjectDecoder *decoder, const HashSet<CFTypeRef>& allowedClasses)
 {
     if (!decoder->_objectStream)
         return nil;
@@ -454,11 +470,11 @@ static void checkIfClassIsAllowed(WKRemoteObjectDecoder *decoder, Class objectCl
     if (!allowedClasses)
         return;
 
-    if (allowedClasses->contains(objectClass))
+    if (allowedClasses->contains((__bridge CFTypeRef)objectClass))
         return;
 
     for (Class superclass = class_getSuperclass(objectClass); superclass; superclass = class_getSuperclass(superclass)) {
-        if (allowedClasses->contains(superclass))
+        if (allowedClasses->contains((__bridge CFTypeRef)superclass))
             return;
     }
 
@@ -478,7 +494,7 @@ static void validateClass(WKRemoteObjectDecoder *decoder, Class objectClass)
     [decoder validateClassSupportsSecureCoding:objectClass];
 }
 
-static void decodeInvocationArguments(WKRemoteObjectDecoder *decoder, NSInvocation *invocation, const Vector<HashSet<Class>>& allowedArgumentClasses, NSUInteger firstArgument)
+static void decodeInvocationArguments(WKRemoteObjectDecoder *decoder, NSInvocation *invocation, const Vector<HashSet<CFTypeRef>>& allowedArgumentClasses, NSUInteger firstArgument)
 {
     NSMethodSignature *methodSignature = invocation.methodSignature;
     NSUInteger argumentCount = methodSignature.numberOfArguments;
@@ -491,56 +507,70 @@ static void decodeInvocationArguments(WKRemoteObjectDecoder *decoder, NSInvocati
         switch (*type) {
         // double
         case 'd': {
-            double value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) doubleValue];
+            double value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) doubleValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // float
         case 'f': {
-            float value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) floatValue];
+            float value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) floatValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // int
         case 'i': {
-            int value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) intValue];
+            int value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) intValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // unsigned
         case 'I': {
-            unsigned value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) unsignedIntValue];
+            unsigned value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) unsignedIntValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // char
         case 'c': {
-            char value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) charValue];
+            char value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) charValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // bool
         case 'B': {
-            bool value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) boolValue];
+            bool value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) boolValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // long
-        case 'q': {
-            long value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) longValue];
+        case 'l': {
+            long value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) longValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
 
         // unsigned long
+        case 'L': {
+            unsigned long value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) unsignedLongValue];
+            [invocation setArgument:&value atIndex:i];
+            break;
+        }
+
+        // long long
+        case 'q': {
+            long long value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) longLongValue];
+            [invocation setArgument:&value atIndex:i];
+            break;
+        }
+
+        // unsigned long long
         case 'Q': {
-            unsigned long value = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) unsignedLongValue];
+            unsigned long long value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) unsignedLongLongValue];
             [invocation setArgument:&value atIndex:i];
             break;
         }
@@ -559,13 +589,13 @@ static void decodeInvocationArguments(WKRemoteObjectDecoder *decoder, NSInvocati
         // struct
         case '{':
             if (!strcmp(type, @encode(NSRange))) {
-                NSRange value = [decodeObjectFromObjectStream(decoder, { [NSValue class] }) rangeValue];
+                NSRange value = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSValue class] }) rangeValue];
                 [invocation setArgument:&value atIndex:i];
                 break;
             } else if (!strcmp(type, @encode(CGSize))) {
                 CGSize value;
-                value.width = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) doubleValue];
-                value.height = [decodeObjectFromObjectStream(decoder, { [NSNumber class] }) doubleValue];
+                value.width = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) doubleValue];
+                value.height = [decodeObjectFromObjectStream(decoder, { (__bridge CFTypeRef)[NSNumber class] }) doubleValue];
                 [invocation setArgument:&value atIndex:i];
                 break;
             }
@@ -609,7 +639,6 @@ static NSInvocation *decodeInvocation(WKRemoteObjectDecoder *decoder)
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Invocation had no type signature"];
 
     NSMethodSignature *remoteMethodSignature = [NSMethodSignature signatureWithObjCTypes:typeSignature.UTF8String];
-    localMethodSignature = remoteMethodSignature;
     if (![localMethodSignature isEqual:remoteMethodSignature])
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Local and remote method signatures are not equal for method \"%s\"", selector ? sel_getName(selector) : "(no selector)"];
 
@@ -675,7 +704,7 @@ static id decodeObject(WKRemoteObjectDecoder *decoder)
     return [result autorelease];
 }
 
-static id decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* dictionary, const HashSet<Class>& allowedClasses)
+static id decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* dictionary, const HashSet<CFTypeRef>& allowedClasses)
 {
     if (!dictionary)
         return nil;
@@ -686,7 +715,7 @@ static id decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* di
     if (allowedClasses.isEmpty())
         return decodeObject(decoder);
 
-    SetForScope<const HashSet<Class>*> allowedClassesChange(decoder->_allowedClasses, &allowedClasses);
+    SetForScope<const HashSet<CFTypeRef>*> allowedClassesChange(decoder->_allowedClasses, &allowedClasses);
     return decodeObject(decoder);
 }
 
@@ -762,9 +791,9 @@ static id decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* di
 
 - (id)decodeObjectOfClasses:(NSSet *)classes forKey:(NSString *)key
 {
-    HashSet<Class> allowedClasses;
+    HashSet<CFTypeRef> allowedClasses;
     for (Class allowedClass in classes)
-        allowedClasses.add(allowedClass);
+        allowedClasses.add((__bridge CFTypeRef)allowedClass);
 
     return decodeObject(self, _currentDictionary->get<API::Dictionary>(escapeKey(key)), allowedClasses);
 }
@@ -775,12 +804,10 @@ static id decodeObject(WKRemoteObjectDecoder *decoder, const API::Dictionary* di
         return [NSSet set];
 
     auto result = adoptNS([[NSMutableSet alloc] init]);
-    for (Class allowedClass : *_allowedClasses)
-        [result addObject:allowedClass];
+    for (auto allowedClass : *_allowedClasses)
+        [result addObject:(__bridge Class)allowedClass];
 
     return result.autorelease();
 }
 
 @end
-
-#endif // WK_API_ENABLED

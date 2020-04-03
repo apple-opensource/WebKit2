@@ -34,6 +34,7 @@
 namespace IPC {
 
 class DataReference;
+enum class ShouldDispatchWhenWaitingForSyncReply;
 
 class Encoder final {
     WTF_MAKE_FAST_ALLOCATED;
@@ -48,8 +49,8 @@ public:
     void setIsSyncMessage(bool);
     bool isSyncMessage() const;
 
-    void setShouldDispatchMessageWhenWaitingForSyncReply(bool);
-    bool shouldDispatchMessageWhenWaitingForSyncReply() const;
+    void setShouldDispatchMessageWhenWaitingForSyncReply(ShouldDispatchWhenWaitingForSyncReply);
+    ShouldDispatchWhenWaitingForSyncReply shouldDispatchMessageWhenWaitingForSyncReply() const;
 
     void setFullySynchronousModeForTesting();
 
@@ -94,6 +95,8 @@ public:
 
     static const bool isIPCEncoder = true;
 
+    void encode(uint64_t);
+
 private:
     uint8_t* grow(unsigned alignment, size_t);
 
@@ -101,7 +104,6 @@ private:
     void encode(uint8_t);
     void encode(uint16_t);
     void encode(uint32_t);
-    void encode(uint64_t);
     void encode(int16_t);
     void encode(int32_t);
     void encode(int64_t);

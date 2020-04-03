@@ -33,9 +33,8 @@
 #include <WebCore/PageCache.h>
 #include <wtf/NeverDestroyed.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 static HashMap<uint64_t, VisitedLinkTableController*>& visitedLinkTableControllers()
 {
@@ -71,7 +70,7 @@ VisitedLinkTableController::~VisitedLinkTableController()
     visitedLinkTableControllers().remove(m_identifier);
 }
 
-bool VisitedLinkTableController::isLinkVisited(Page&, SharedStringHash linkHash, const URL&, const AtomicString&)
+bool VisitedLinkTableController::isLinkVisited(Page&, SharedStringHash linkHash, const URL&, const AtomString&)
 {
     return m_visitedLinkTable.contains(linkHash);
 }

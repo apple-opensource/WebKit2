@@ -34,14 +34,15 @@
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/Frame.h>
 #include <WebCore/FrameLoader.h>
+#include <WebCore/GraphicsContextImplCairo.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/PlatformContextCairo.h>
 #include <WebCore/PrintContext.h>
 #include <WebCore/ResourceError.h>
-#include <WebCore/URL.h>
 #include <gtk/gtk.h>
 #include <memory>
+#include <wtf/URL.h>
 #include <wtf/Vector.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -133,7 +134,16 @@ public:
                 break;
             }
         } else if (surfaceType == CAIRO_SURFACE_TYPE_PDF)
-            cairo_pdf_surface_set_size(surface, width, height);
+            switch (gtk_page_setup_get_orientation(m_pageSetup.get())) {
+            case GTK_PAGE_ORIENTATION_PORTRAIT:
+            case GTK_PAGE_ORIENTATION_REVERSE_PORTRAIT:
+                cairo_pdf_surface_set_size(surface, width, height);
+                break;
+            case GTK_PAGE_ORIENTATION_LANDSCAPE:
+            case GTK_PAGE_ORIENTATION_REVERSE_LANDSCAPE:
+                cairo_pdf_surface_set_size(surface, height, width);
+                break;
+            }
     }
 
     void endPage(cairo_t* cr) override
@@ -444,13 +454,13 @@ bool WebPrintOperationGtk::currentPageIsLastPageOfSheet() const
     return (m_numberUp < 2 || !((m_pagePosition + 1) % m_numberUp) || m_pagePosition == m_numberOfPagesToPrint - 1);
 }
 
-WebCore::URL WebPrintOperationGtk::frameURL() const
+URL WebPrintOperationGtk::frameURL() const
 {
     if (!m_printContext)
-        return WebCore::URL();
+        return URL();
 
     WebCore::DocumentLoader* documentLoader = m_printContext->frame()->loader().documentLoader();
-    return documentLoader ? documentLoader->url() : WebCore::URL();
+    return documentLoader ? documentLoader->url() : URL();
 }
 
 void WebPrintOperationGtk::rotatePageIfNeeded()
@@ -665,8 +675,7 @@ void WebPrintOperationGtk::renderPage(int pageNumber)
     prepareContextToDraw();
 
     double pageWidth = gtk_page_setup_get_page_width(m_pageSetup.get(), GTK_UNIT_INCH) * m_xDPI;
-    WebCore::PlatformContextCairo platformContext(m_cairoContext.get());
-    WebCore::GraphicsContext graphicsContext(&platformContext);
+    WebCore::GraphicsContext graphicsContext(WebCore::GraphicsContextImplCairo::createFactory(m_cairoContext.get()));
     m_printContext->spoolPage(graphicsContext, pageNumber, pageWidth / m_scale);
 
     cairo_restore(m_cairoContext.get());

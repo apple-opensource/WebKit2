@@ -22,11 +22,10 @@
 #include "config.h"
 #include "SimpleViewportController.h"
 
-#if USE(COORDINATED_GRAPHICS_THREADED)
-
-using namespace WebCore;
+#if USE(COORDINATED_GRAPHICS)
 
 namespace WebKit {
+using namespace WebCore;
 
 SimpleViewportController::SimpleViewportController(const IntSize& size)
     : m_viewportSize(size)
@@ -169,4 +168,4 @@ void SimpleViewportController::resetViewportToDefaultState()
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS_THREADED)
+#endif // USE(COORDINATED_GRAPHICS)

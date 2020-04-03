@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,18 +25,14 @@
 
 #import "WKPreferencesPrivate.h"
 
-#if WK_API_ENABLED
-
 #import "WKObject.h"
 #import "WebPreferences.h"
 
 namespace WebKit {
 
-inline WKPreferences *wrapper(WebPreferences& preferences)
-{
-    ASSERT([preferences.wrapper() isKindOfClass:[WKPreferences class]]);
-    return (WKPreferences *)preferences.wrapper();
-}
+template<> struct WrapperTraits<WebPreferences> {
+    using WrapperClass = WKPreferences;
+};
 
 }
 
@@ -46,5 +42,3 @@ inline WKPreferences *wrapper(WebPreferences& preferences)
 }
 
 @end
-
-#endif

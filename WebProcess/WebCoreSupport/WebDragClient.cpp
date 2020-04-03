@@ -30,9 +30,8 @@
 
 #include "WebPage.h"
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 void WebDragClient::willPerformDragDestinationAction(DragDestinationAction action, const DragData&)
 {
@@ -48,7 +47,7 @@ void WebDragClient::willPerformDragSourceAction(DragSourceAction, const IntPoint
 
 DragSourceAction WebDragClient::dragSourceActionMaskForPoint(const IntPoint&)
 {
-    return DragSourceActionAny;
+    return m_page->allowedDragSourceActions();
 }
 
 #if !PLATFORM(COCOA) && !PLATFORM(GTK)
@@ -64,11 +63,6 @@ void WebDragClient::didConcludeEditDrag()
 void WebDragClient::dragControllerDestroyed()
 {
     delete this;
-}
-
-void WebDragClient::prepareToDragPromisedBlob(const WebCore::PromisedBlobInfo& info)
-{
-    m_page->prepareToDragPromisedBlob(info);
 }
 
 } // namespace WebKit

@@ -32,39 +32,34 @@
 #import <WebCore/ResourceRequest.h>
 #import <WebCore/ResourceResponse.h>
 
-using namespace WebCore;
-using namespace WebKit;
-
 @interface WKCustomProtocolLoader : NSObject <NSURLConnectionDelegate> {
 @private
-    LegacyCustomProtocolManagerProxy* _customProtocolManagerProxy;
+    WeakPtr<WebKit::LegacyCustomProtocolManagerProxy> _customProtocolManagerProxy;
     uint64_t _customProtocolID;
     NSURLCacheStoragePolicy _storagePolicy;
     NSURLConnection *_urlConnection;
 }
-- (id)initWithLegacyCustomProtocolManagerProxy:(LegacyCustomProtocolManagerProxy*)customProtocolManagerProxy customProtocolID:(uint64_t)customProtocolID request:(NSURLRequest *)request;
-- (void)customProtocolManagerProxyDestroyed;
+- (id)initWithLegacyCustomProtocolManagerProxy:(WebKit::LegacyCustomProtocolManagerProxy&)customProtocolManagerProxy customProtocolID:(uint64_t)customProtocolID request:(NSURLRequest *)request;
+- (void)cancel;
 @end
 
 @implementation WKCustomProtocolLoader
 
-- (id)initWithLegacyCustomProtocolManagerProxy:(LegacyCustomProtocolManagerProxy*)customProtocolManagerProxy customProtocolID:(uint64_t)customProtocolID request:(NSURLRequest *)request
+- (id)initWithLegacyCustomProtocolManagerProxy:(WebKit::LegacyCustomProtocolManagerProxy&)customProtocolManagerProxy customProtocolID:(uint64_t)customProtocolID request:(NSURLRequest *)request
 {
     self = [super init];
     if (!self)
         return nil;
 
-    ASSERT(customProtocolManagerProxy);
     ASSERT(request);
-    _customProtocolManagerProxy = customProtocolManagerProxy;
+    _customProtocolManagerProxy = makeWeakPtr(customProtocolManagerProxy);
     _customProtocolID = customProtocolID;
     _storagePolicy = NSURLCacheStorageNotAllowed;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     _urlConnection = [[NSURLConnection alloc] initWithRequest:request delegate:self startImmediately:NO];
     [_urlConnection scheduleInRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     [_urlConnection start];
-#pragma clang diagnostic pop
+    ALLOW_DEPRECATED_DECLARATIONS_END
 
     return self;
 }
@@ -76,7 +71,7 @@ using namespace WebKit;
     [super dealloc];
 }
 
-- (void)customProtocolManagerProxyDestroyed
+- (void)cancel
 {
     ASSERT(_customProtocolManagerProxy);
     _customProtocolManagerProxy = nullptr;
@@ -85,7 +80,10 @@ using namespace WebKit;
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
 {
-    ResourceError coreError(error);
+    if (!_customProtocolManagerProxy)
+        return;
+
+    WebCore::ResourceError coreError(error);
     _customProtocolManagerProxy->didFailWithError(_customProtocolID, coreError);
     _customProtocolManagerProxy->stopLoading(_customProtocolID);
 }
@@ -99,18 +97,27 @@ using namespace WebKit;
 
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
 {
-    ResourceResponse coreResponse(response);
+    if (!_customProtocolManagerProxy)
+        return;
+
+    WebCore::ResourceResponse coreResponse(response);
     _customProtocolManagerProxy->didReceiveResponse(_customProtocolID, coreResponse, _storagePolicy);
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
 {
+    if (!_customProtocolManagerProxy)
+        return;
+
     IPC::DataReference coreData(static_cast<const uint8_t*>([data bytes]), [data length]);
     _customProtocolManagerProxy->didLoadData(_customProtocolID, coreData);
 }
 
 - (NSURLRequest *)connection:(NSURLConnection *)connection willSendRequest:(NSURLRequest *)request redirectResponse:(NSURLResponse *)redirectResponse
 {
+    if (!_customProtocolManagerProxy)
+        return nil;
+
     if (redirectResponse) {
         _customProtocolManagerProxy->wasRedirectedToRequest(_customProtocolID, request, redirectResponse);
         return nil;
@@ -120,6 +127,9 @@ using namespace WebKit;
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
 {
+    if (!_customProtocolManagerProxy)
+        return;
+
     _customProtocolManagerProxy->didFinishLoading(_customProtocolID);
     _customProtocolManagerProxy->stopLoading(_customProtocolID);
 }
@@ -127,14 +137,15 @@ using namespace WebKit;
 @end
 
 namespace WebKit {
+using namespace WebCore;
 
 void LegacyCustomProtocolManagerClient::startLoading(LegacyCustomProtocolManagerProxy& manager, uint64_t customProtocolID, const ResourceRequest& coreRequest)
 {
-    NSURLRequest *request = coreRequest.nsURLRequest(DoNotUpdateHTTPBody);
+    NSURLRequest *request = coreRequest.nsURLRequest(HTTPBodyUpdatePolicy::DoNotUpdateHTTPBody);
     if (!request)
         return;
 
-    WKCustomProtocolLoader *loader = [[WKCustomProtocolLoader alloc] initWithLegacyCustomProtocolManagerProxy:&manager customProtocolID:customProtocolID request:request];
+    WKCustomProtocolLoader *loader = [[WKCustomProtocolLoader alloc] initWithLegacyCustomProtocolManagerProxy:manager customProtocolID:customProtocolID request:request];
     ASSERT(loader);
     ASSERT(!m_loaderMap.contains(customProtocolID));
     m_loaderMap.add(customProtocolID, loader);
@@ -151,7 +162,7 @@ void LegacyCustomProtocolManagerClient::invalidate(LegacyCustomProtocolManagerPr
     while (!m_loaderMap.isEmpty()) {
         auto loader = m_loaderMap.take(m_loaderMap.begin()->key);
         ASSERT(loader);
-        [loader customProtocolManagerProxyDestroyed];
+        [loader cancel];
     }
 }
 

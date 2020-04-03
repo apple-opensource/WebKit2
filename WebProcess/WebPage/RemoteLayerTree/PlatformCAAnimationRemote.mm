@@ -28,6 +28,7 @@
 
 #import "ArgumentCoders.h"
 #import "RemoteLayerTreeHost.h"
+#import "WKAnimationDelegate.h"
 #import "WebCoreArgumentCoders.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/GraphicsLayer.h>
@@ -36,32 +37,22 @@
 #import <WebCore/TimingFunction.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/BlockObjCExceptions.h>
-#import <wtf/CurrentTime.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/text/TextStream.h>
 
-using namespace WTF;
-using namespace WebCore;
-
-static double mediaTimeToCurrentTime(CFTimeInterval t)
+static MonotonicTime mediaTimeToCurrentTime(CFTimeInterval t)
 {
-    return monotonicallyIncreasingTime() + t - CACurrentMediaTime();
+    return WTF::MonotonicTime::now() + Seconds(t - CACurrentMediaTime());
 }
 
 static NSString * const WKExplicitBeginTimeFlag = @"WKPlatformCAAnimationExplicitBeginTimeFlag";
 
-@interface WKAnimationDelegate : NSObject <CAAnimationDelegate> {
-    GraphicsLayer::PlatformLayerID _layerID;
-    WebKit::RemoteLayerTreeHost* _layerTreeHost;
-}
-
-- (instancetype)initWithLayerID:(GraphicsLayer::PlatformLayerID)layerID layerTreeHost:(WebKit::RemoteLayerTreeHost*)layerTreeHost;
-- (void)invalidate;
+@interface WKAnimationDelegate () <CAAnimationDelegate>
 @end
 
 @implementation WKAnimationDelegate
 
-- (instancetype)initWithLayerID:(GraphicsLayer::PlatformLayerID)layerID layerTreeHost:(WebKit::RemoteLayerTreeHost*)layerTreeHost
+- (instancetype)initWithLayerID:(WebCore::GraphicsLayer::PlatformLayerID)layerID layerTreeHost:(WebKit::RemoteLayerTreeHost*)layerTreeHost
 {
     if ((self = [super init])) {
         _layerID = layerID;
@@ -81,7 +72,7 @@ static NSString * const WKExplicitBeginTimeFlag = @"WKPlatformCAAnimationExplici
         return;
 
     bool hasExplicitBeginTime = [[animation valueForKey:WKExplicitBeginTimeFlag] boolValue];
-    CFTimeInterval startTime;
+    MonotonicTime startTime;
 
     if (hasExplicitBeginTime) {
         // We don't know what time CA used to commit the animation, so just use the current time
@@ -104,6 +95,7 @@ static NSString * const WKExplicitBeginTimeFlag = @"WKPlatformCAAnimationExplici
 @end
 
 namespace WebKit {
+using namespace WebCore;
 
 void PlatformCAAnimationRemote::KeyframeValue::encode(IPC::Encoder& encoder) const
 {
@@ -128,32 +120,32 @@ void PlatformCAAnimationRemote::KeyframeValue::encode(IPC::Encoder& encoder) con
     }
 }
 
-std::optional<PlatformCAAnimationRemote::KeyframeValue> PlatformCAAnimationRemote::KeyframeValue::decode(IPC::Decoder& decoder)
+Optional<PlatformCAAnimationRemote::KeyframeValue> PlatformCAAnimationRemote::KeyframeValue::decode(IPC::Decoder& decoder)
 {
     PlatformCAAnimationRemote::KeyframeValue value;
     if (!decoder.decodeEnum(value.keyType))
-        return std::nullopt;
+        return WTF::nullopt;
 
     switch (value.keyType) {
     case NumberKeyType:
         if (!decoder.decode(value.number))
-            return std::nullopt;
+            return WTF::nullopt;
         break;
     case ColorKeyType:
         if (!decoder.decode(value.color))
-            return std::nullopt;
+            return WTF::nullopt;
         break;
     case PointKeyType:
         if (!decoder.decode(value.point))
-            return std::nullopt;
+            return WTF::nullopt;
         break;
     case TransformKeyType:
         if (!decoder.decode(value.transform))
-            return std::nullopt;
+            return WTF::nullopt;
         break;
     case FilterKeyType:
         if (!decodeFilterOperation(decoder, value.filter))
-            return std::nullopt;
+            return WTF::nullopt;
         break;
     }
 
@@ -205,60 +197,60 @@ void PlatformCAAnimationRemote::Properties::encode(IPC::Encoder& encoder) const
     }
 }
 
-std::optional<PlatformCAAnimationRemote::Properties> PlatformCAAnimationRemote::Properties::decode(IPC::Decoder& decoder)
+Optional<PlatformCAAnimationRemote::Properties> PlatformCAAnimationRemote::Properties::decode(IPC::Decoder& decoder)
 {
     PlatformCAAnimationRemote::Properties properties;
     if (!decoder.decode(properties.keyPath))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decodeEnum(properties.animationType))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.beginTime))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.duration))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.timeOffset))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.repeatCount))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.speed))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decodeEnum(properties.fillMode))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decodeEnum(properties.valueFunction))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.autoReverses))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.removedOnCompletion))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.additive))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.reverseTimingFunctions))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.hasExplicitBeginTime))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.keyValues))
-        return std::nullopt;
+        return WTF::nullopt;
 
     if (!decoder.decode(properties.keyTimes))
-        return std::nullopt;
+        return WTF::nullopt;
 
     uint64_t numTimingFunctions;
     if (!decoder.decode(numTimingFunctions))
-        return std::nullopt;
+        return WTF::nullopt;
     
     if (numTimingFunctions) {
         properties.timingFunctions.reserveInitialCapacity(numTimingFunctions);
@@ -267,32 +259,32 @@ std::optional<PlatformCAAnimationRemote::Properties> PlatformCAAnimationRemote::
         
             TimingFunction::TimingFunctionType type;
             if (!decoder.decodeEnum(type))
-                return std::nullopt;
+                return WTF::nullopt;
 
             RefPtr<TimingFunction> timingFunction;
             switch (type) {
             case TimingFunction::LinearFunction:
                 timingFunction = LinearTimingFunction::create();
                 if (!decoder.decode(*static_cast<LinearTimingFunction*>(timingFunction.get())))
-                    return std::nullopt;
+                    return WTF::nullopt;
                 break;
                 
             case TimingFunction::CubicBezierFunction:
                 timingFunction = CubicBezierTimingFunction::create();
                 if (!decoder.decode(*static_cast<CubicBezierTimingFunction*>(timingFunction.get())))
-                    return std::nullopt;
+                    return WTF::nullopt;
                 break;
             
             case TimingFunction::StepsFunction:
                 timingFunction = StepsTimingFunction::create();
                 if (!decoder.decode(*static_cast<StepsTimingFunction*>(timingFunction.get())))
-                    return std::nullopt;
+                    return WTF::nullopt;
                 break;
 
             case TimingFunction::SpringFunction:
                 timingFunction = SpringTimingFunction::create();
                 if (!decoder.decode(*static_cast<SpringTimingFunction*>(timingFunction.get())))
-                    return std::nullopt;
+                    return WTF::nullopt;
                 break;
             }
             
@@ -809,7 +801,7 @@ static void addAnimationToLayer(CALayer *layer, RemoteLayerTreeHost* layerTreeHo
         [caAnimation setValue:@YES forKey:WKExplicitBeginTimeFlag];
     
     if (layerTreeHost) {
-        GraphicsLayer::PlatformLayerID layerID = RemoteLayerTreeHost::layerID(layer);
+        GraphicsLayer::PlatformLayerID layerID = RemoteLayerTreeNode::layerID(layer);
     
         RetainPtr<WKAnimationDelegate>& delegate = layerTreeHost->animationDelegates().add(layerID, nullptr).iterator->value;
         if (!delegate)

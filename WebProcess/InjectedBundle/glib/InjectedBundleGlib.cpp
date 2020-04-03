@@ -29,10 +29,8 @@
 
 #include "WKBundleAPICast.h"
 #include "WKBundleInitialize.h"
-#include <WebCore/FileSystem.h>
+#include <wtf/FileSystem.h>
 #include <wtf/text/CString.h>
-
-using namespace WebCore;
 
 namespace WebKit {
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,23 +25,17 @@
 
 #import "WKWebProcessPlugInPrivate.h"
 
-#if WK_API_ENABLED
-
 #import "InjectedBundle.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline WKWebProcessPlugInController *wrapper(InjectedBundle& bundle)
-{
-    ASSERT([bundle.wrapper() isKindOfClass:[WKWebProcessPlugInController class]]);
-    return (WKWebProcessPlugInController *)bundle.wrapper();
-}
+template<> struct WrapperTraits<InjectedBundle> {
+    using WrapperClass = WKWebProcessPlugInController;
+};
 
 }
 
 @interface WKWebProcessPlugInController () <WKObject>
 - (void)_setPrincipalClassInstance:(id <WKWebProcessPlugIn>)principalClassInstance;
 @end
-
-#endif // WK_API_ENABLED

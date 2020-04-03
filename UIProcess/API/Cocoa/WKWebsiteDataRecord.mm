@@ -26,9 +26,9 @@
 #import "config.h"
 #import "WKWebsiteDataRecordInternal.h"
 
-#if WK_API_ENABLED
-
 #import "_WKWebsiteDataSizeInternal.h"
+#import <WebCore/SecurityOriginData.h>
+#import <wtf/HashSet.h>
 
 NSString * const WKWebsiteDataTypeFetchCache = @"WKWebsiteDataTypeFetchCache";
 NSString * const WKWebsiteDataTypeDiskCache = @"WKWebsiteDataTypeDiskCache";
@@ -48,6 +48,7 @@ NSString * const _WKWebsiteDataTypeHSTSCache = @"_WKWebsiteDataTypeHSTSCache";
 NSString * const _WKWebsiteDataTypeSearchFieldRecentSearches = @"_WKWebsiteDataTypeSearchFieldRecentSearches";
 NSString * const _WKWebsiteDataTypeResourceLoadStatistics = @"_WKWebsiteDataTypeResourceLoadStatistics";
 NSString * const _WKWebsiteDataTypeCredentials = @"_WKWebsiteDataTypeCredentials";
+NSString * const _WKWebsiteDataTypeAdClickAttributions = @"_WKWebsiteDataTypeAdClickAttributions";
 
 #if PLATFORM(MAC)
 NSString * const _WKWebsiteDataTypePlugInData = @"_WKWebsiteDataTypePlugInData";
@@ -100,6 +101,8 @@ static NSString *dataTypesToString(NSSet *dataTypes)
         [array addObject:@"Resource Load Statistics"];
     if ([dataTypes containsObject:_WKWebsiteDataTypeCredentials])
         [array addObject:@"Credentials"];
+    if ([dataTypes containsObject:_WKWebsiteDataTypeAdClickAttributions])
+        [array addObject:@"Ad Click Attributions"];
 
     return [array componentsJoinedByString:@", "];
 }
@@ -146,6 +149,13 @@ static NSString *dataTypesToString(NSSet *dataTypes)
     return [[[_WKWebsiteDataSize alloc] initWithSize:*size] autorelease];
 }
 
-@end
+- (NSArray<NSString *> *)_originsStrings
+{
+    auto origins = _websiteDataRecord->websiteDataRecord().origins;
+    NSMutableArray<NSString *> *array = [[NSMutableArray alloc] initWithCapacity:origins.size()];
+    for (auto& origin : origins)
+        [array addObject:(NSString *)origin.toString()];
+    return [array autorelease];
+}
 
-#endif
+@end

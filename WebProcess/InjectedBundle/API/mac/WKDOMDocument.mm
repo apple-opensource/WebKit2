@@ -26,14 +26,29 @@
 #import "config.h"
 #import "WKDOMDocument.h"
 
-#if WK_API_ENABLED
-
 #import "WKDOMInternals.h"
 #import <WebCore/Document.h>
 #import <WebCore/DocumentFragment.h>
 #import <WebCore/HTMLElement.h>
 #import <WebCore/Text.h>
 #import <WebCore/markup.h>
+
+@interface WKDOMDocumentParserYieldToken : NSObject
+
+@end
+
+@implementation WKDOMDocumentParserYieldToken {
+    std::unique_ptr<WebCore::DocumentParserYieldToken> _token;
+}
+
+- (instancetype)initWithDocument:(WebCore::Document&)document
+{
+    if (self = [super init])
+        _token = document.createParserYieldToken();
+    return self;
+}
+
+@end
 
 @implementation WKDOMDocument
 
@@ -66,6 +81,9 @@
     return WebKit::toWKDOMNode(createFragmentFromText(downcast<WebCore::Document>(*_impl).createRange().get(), text).ptr());
 }
 
-@end
+- (id)parserYieldToken
+{
+    return [[[WKDOMDocumentParserYieldToken alloc] initWithDocument:downcast<WebCore::Document>(*_impl)] autorelease];
+}
 
-#endif // WK_API_ENABLED
+@end

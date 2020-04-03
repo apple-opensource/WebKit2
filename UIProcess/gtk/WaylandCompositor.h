@@ -25,11 +25,12 @@
 
 #pragma once
 
-#if PLATFORM(WAYLAND) && USE(EGL)
+#if PLATFORM(WAYLAND) && USE(EGL) && !USE(WPE_RENDERER)
 
 #include "WebPageProxy.h"
 #include <WebCore/RefPtrCairo.h>
 #include <WebCore/WlUniquePtr.h>
+#include <wayland-server.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Noncopyable.h>
@@ -39,21 +40,17 @@
 
 typedef void *EGLImageKHR;
 
-namespace WebCore {
-class GLContext;
-}
-
 namespace WebKit {
 
 class WebPageProxy;
 
 class WaylandCompositor {
     WTF_MAKE_NONCOPYABLE(WaylandCompositor);
-    friend class NeverDestroyed<WaylandCompositor>;
+    friend NeverDestroyed<WaylandCompositor>;
 public:
     static WaylandCompositor& singleton();
 
-    class Buffer {
+    class Buffer : public CanMakeWeakPtr<Buffer> {
         WTF_MAKE_NONCOPYABLE(Buffer); WTF_MAKE_FAST_ALLOCATED;
     public:
         static Buffer* getOrCreate(struct wl_resource*);
@@ -65,8 +62,6 @@ public:
         EGLImageKHR createImage() const;
         WebCore::IntSize size() const;
 
-        WeakPtr<Buffer> createWeakPtr() { return m_weakPtrFactory.createWeakPtr(*this); }
-
     private:
         Buffer(struct wl_resource*);
         static void destroyListenerCallback(struct wl_listener*, void*);
@@ -74,10 +69,9 @@ public:
         struct wl_resource* m_resource { nullptr };
         struct wl_listener m_destroyListener;
         uint32_t m_busyCount { 0 };
-        WeakPtrFactory<Buffer> m_weakPtrFactory;
     };
 
-    class Surface {
+    class Surface : public CanMakeWeakPtr<Surface> {
         WTF_MAKE_NONCOPYABLE(Surface); WTF_MAKE_FAST_ALLOCATED;
     public:
         Surface();
@@ -97,7 +91,7 @@ public:
 
         WeakPtr<Buffer> m_buffer;
         WeakPtr<Buffer> m_pendingBuffer;
-        unsigned m_texture;
+        unsigned m_texture { 0 };
         EGLImageKHR m_image;
         WebCore::IntSize m_imageSize;
         Vector<wl_resource*> m_pendingFrameCallbackList;
@@ -109,7 +103,7 @@ public:
     bool isRunning() const { return !!m_display; }
     String displayName() const { return m_displayName; }
 
-    void bindSurfaceToWebPage(Surface*, uint64_t pageID);
+    void bindSurfaceToWebPage(Surface*, WebCore::PageIdentifier);
     void registerWebPage(WebPageProxy&);
     void unregisterWebPage(WebPageProxy&);
 
@@ -121,14 +115,18 @@ private:
     bool initializeEGL();
 
     String m_displayName;
-    WebCore::WlUniquePtr<struct wl_display> m_display;
+
+    struct DisplayDeleter {
+        void operator() (struct wl_display* display) { wl_display_destroy(display); }
+    };
+    std::unique_ptr<struct wl_display, DisplayDeleter> m_display;
+
     WebCore::WlUniquePtr<struct wl_global> m_compositorGlobal;
     WebCore::WlUniquePtr<struct wl_global> m_webkitgtkGlobal;
     GRefPtr<GSource> m_eventSource;
-    std::unique_ptr<WebCore::GLContext> m_eglContext;
-    HashMap<WebPageProxy*, Surface*> m_pageMap;
+    HashMap<WebPageProxy*, WeakPtr<Surface>> m_pageMap;
 };
 
 } // namespace WebKit
 
-#endif // PLATFORM(WAYLAND) && USE(EGL)
+#endif // PLATFORM(WAYLAND) && USE(EGL) && !USE(WPE_RENDERER)

@@ -29,8 +29,6 @@
 #import <WebCore/Range.h>
 #import <wtf/HashMap.h>
 
-#if WK_API_ENABLED
-
 namespace WebCore {
 class Element;
 class Document;
@@ -89,8 +87,8 @@ private:
 
 // -- Caches --
 
-DOMCache<WebCore::Node*, WKDOMNode *>& WKDOMNodeCache();
-DOMCache<WebCore::Range*, WKDOMRange *>& WKDOMRangeCache();
+DOMCache<WebCore::Node*, __unsafe_unretained WKDOMNode *>& WKDOMNodeCache();
+DOMCache<WebCore::Range*, __unsafe_unretained WKDOMRange *>& WKDOMRangeCache();
 
 // -- Node and classes derived from Node. --
 
@@ -116,5 +114,3 @@ WKDOMRange *toWKDOMRange(WebCore::Range*);
 NSArray *toNSArray(const Vector<WebCore::IntRect>&);
 
 } // namespace WebKit
-
-#endif // WK_API_ENABLED

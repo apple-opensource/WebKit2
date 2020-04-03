@@ -40,16 +40,28 @@ extern "C" {
 #endif
 
 #define WEBKIT2_LOG_CHANNELS(M) \
+    M(AdClickAttribution) \
+    M(Automation) \
+    M(AutomationInteractions) \
+    M(ActivityState) \
+    M(BackForward) \
     M(CacheStorage) \
+    M(ContentObservation) \
     M(ContextMenu) \
+    M(DiskPersistency) \
     M(DragAndDrop) \
     M(Fullscreen) \
     M(Gamepad) \
     M(IconDatabase) \
     M(IndexedDB) \
     M(IPC) \
+    M(ITPDebug) \
     M(KeyHandling) \
     M(Layers) \
+    M(Layout) \
+    M(Loading) \
+    M(LocalStorageDatabaseTracker) \
+    M(MouseHandling) \
     M(Network) \
     M(NetworkCache) \
     M(NetworkCacheSpeculativePreloading) \
@@ -59,24 +71,36 @@ extern "C" {
     M(PerformanceLogging) \
     M(Plugins) \
     M(Printing) \
+    M(Process) \
     M(ProcessSuspension) \
+    M(ProcessSwapping) \
+    M(ProximityNetworking) \
     M(RemoteLayerTree) \
     M(Resize) \
     M(ResourceLoadStatistics) \
+    M(Scrolling) \
     M(Selection) \
     M(ServiceWorker) \
     M(SessionState) \
+    M(Storage) \
     M(StorageAPI) \
     M(TextInput) \
+    M(UIHitTesting) \
     M(ViewGestures) \
     M(ViewState) \
+    M(ViewportSizing) \
     M(VirtualMemory) \
     M(VisibleRects) \
+    M(WebGL) \
     M(WebRTC) \
 
 WEBKIT2_LOG_CHANNELS(DECLARE_LOG_CHANNEL)
 
 #undef DECLARE_LOG_CHANNEL
+
+namespace WebKit {
+WTFLogChannel* getLogChannel(const String&);
+} // namespace WebKit
 
 #ifdef __cplusplus
 }

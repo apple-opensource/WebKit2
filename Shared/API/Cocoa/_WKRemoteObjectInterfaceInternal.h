@@ -25,8 +25,6 @@
 
 #import "_WKRemoteObjectInterface.h"
 
-#if WK_API_ENABLED
-
 #import <wtf/Forward.h>
 #import <wtf/HashSet.h>
 #import <wtf/Vector.h>
@@ -35,9 +33,7 @@
 
 - (NSMethodSignature *)_methodSignatureForSelector:(SEL)selector;
 - (NSMethodSignature *)_methodSignatureForReplyBlockOfSelector:(SEL)selector;
-- (const Vector<HashSet<Class>>&)_allowedArgumentClassesForSelector:(SEL)selector;
-- (const Vector<HashSet<Class>>&)_allowedArgumentClassesForReplyBlockOfSelector:(SEL)selector;
+- (const Vector<HashSet<CFTypeRef>>&)_allowedArgumentClassesForSelector:(SEL)selector;
+- (const Vector<HashSet<CFTypeRef>>&)_allowedArgumentClassesForReplyBlockOfSelector:(SEL)selector;
 
 @end
-
-#endif // WK_API_ENABLED

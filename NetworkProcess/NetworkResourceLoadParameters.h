@@ -23,19 +23,14 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NetworkResourceLoadParameters_h
-#define NetworkResourceLoadParameters_h
+#pragma once
 
 #include "NetworkLoadParameters.h"
 #include "SandboxExtension.h"
-#include "WebCompiledContentRuleListData.h"
+#include "UserContentControllerIdentifier.h"
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/FetchOptions.h>
-#include <WebCore/ResourceHandle.h>
-#include <WebCore/ResourceLoaderOptions.h>
-#include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOrigin.h>
-#include <pal/SessionID.h>
 #include <wtf/Seconds.h>
 
 namespace IPC {
@@ -56,17 +51,20 @@ public:
     Vector<RefPtr<SandboxExtension>> requestBodySandboxExtensions; // Created automatically for the sender.
     RefPtr<SandboxExtension> resourceSandboxExtension; // Created automatically for the sender.
     Seconds maximumBufferingTime;
-    Vector<String> derivedCachedDataTypesToRetrieve;
     RefPtr<WebCore::SecurityOrigin> sourceOrigin;
-    WebCore::FetchOptions::Mode mode;
-    std::optional<WebCore::ContentSecurityPolicyResponseHeaders> cspResponseHeaders;
+    WebCore::FetchOptions options;
+    Optional<WebCore::ContentSecurityPolicyResponseHeaders> cspResponseHeaders;
+    WebCore::HTTPHeaderMap originalRequestHeaders;
+    bool shouldRestrictHTTPResponseAccess { false };
+    WebCore::PreflightPolicy preflightPolicy { WebCore::PreflightPolicy::Consider };
+    bool shouldEnableCrossOriginResourcePolicy { false };
+    Vector<RefPtr<WebCore::SecurityOrigin>> frameAncestorOrigins;
+    bool isHTTPSUpgradeEnabled { false };
 
 #if ENABLE(CONTENT_EXTENSIONS)
-    WebCore::URL mainDocumentURL;
-    Vector<std::pair<String, WebCompiledContentRuleListData>> contentRuleLists;
+    URL mainDocumentURL;
+    Optional<UserContentControllerIdentifier> userContentControllerIdentifier;
 #endif
 };
 
 } // namespace WebKit
-
-#endif // NetworkResourceLoadParameters_h

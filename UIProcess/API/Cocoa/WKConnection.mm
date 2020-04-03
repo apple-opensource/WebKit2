@@ -26,19 +26,17 @@
 #import "config.h"
 #import "WKConnectionInternal.h"
 
-#if WK_API_ENABLED
-
 #import "ObjCObjectGraph.h"
 #import "WKRetainPtr.h"
 #import "WKSharedAPICast.h"
 #import "WKStringCF.h"
-#import "WeakObjCPtr.h"
 #import <wtf/RetainPtr.h>
+#import <wtf/WeakObjCPtr.h>
 #import <wtf/text/WTFString.h>
 
-using namespace WebKit;
-
+ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 @implementation WKConnection {
+ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     WeakObjCPtr<id <WKConnectionDelegate>> _delegate;
 }
 
@@ -51,32 +49,36 @@ using namespace WebKit;
 
 static void didReceiveMessage(WKConnectionRef, WKStringRef messageName, WKTypeRef messageBody, const void* clientInfo)
 {
-    WKConnection *connection = (WKConnection *)clientInfo;
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    auto connection = (__bridge WKConnection *)clientInfo;
+    ALLOW_DEPRECATED_DECLARATIONS_END
     auto delegate = connection->_delegate.get();
 
     if ([delegate respondsToSelector:@selector(connection:didReceiveMessageWithName:body:)]) {
         RetainPtr<CFStringRef> nsMessageName = adoptCF(WKStringCopyCFString(kCFAllocatorDefault, messageName));
-        RetainPtr<id> nsMessageBody = static_cast<ObjCObjectGraph*>(toImpl(messageBody))->rootObject();
-        [delegate connection:connection didReceiveMessageWithName:(NSString *)nsMessageName.get() body:nsMessageBody.get()];
+        RetainPtr<id> nsMessageBody = static_cast<WebKit::ObjCObjectGraph*>(WebKit::toImpl(messageBody))->rootObject();
+        [delegate connection:connection didReceiveMessageWithName:(__bridge NSString *)nsMessageName.get() body:nsMessageBody.get()];
     }
 }
 
 static void didClose(WKConnectionRef, const void* clientInfo)
 {
-    WKConnection *connection = (WKConnection *)clientInfo;
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    auto connection = (__bridge WKConnection *)clientInfo;
+    ALLOW_DEPRECATED_DECLARATIONS_END
     auto delegate = connection->_delegate.get();
 
     if ([delegate respondsToSelector:@selector(connectionDidClose:)])
         [delegate connectionDidClose:connection];
 }
 
-static void setUpClient(WKConnection *wrapper, WebConnection& connection)
+static void setUpClient(WKConnection *wrapper, WebKit::WebConnection& connection)
 {
     WKConnectionClientV0 client;
     memset(&client, 0, sizeof(client));
 
     client.base.version = 0;
-    client.base.clientInfo = wrapper;
+    client.base.clientInfo = (__bridge void*)wrapper;
     client.didReceiveMessage = didReceiveMessage;
     client.didClose = didClose;
 
@@ -99,13 +101,13 @@ static void setUpClient(WKConnection *wrapper, WebConnection& connection)
 
 - (void)sendMessageWithName:(NSString *)messageName body:(id)messageBody
 {
-    RefPtr<ObjCObjectGraph> wkMessageBody = ObjCObjectGraph::create(messageBody);
-    self._connection.postMessage(messageName, wkMessageBody.get());
+    auto wkMessageBody = WebKit::ObjCObjectGraph::create(messageBody);
+    self._connection.postMessage(messageName, wkMessageBody.ptr());
 }
 
-- (WebConnection&)_connection
+- (WebKit::WebConnection&)_connection
 {
-    return static_cast<WebConnection&>(API::Object::fromWKObjectExtraSpace(self));
+    return static_cast<WebKit::WebConnection&>(API::Object::fromWKObjectExtraSpace(self));
 }
 
 #pragma mark WKObject protocol implementation
@@ -116,5 +118,3 @@ static void setUpClient(WKConnection *wrapper, WebConnection& connection)
 }
 
 @end
-
-#endif // WK_API_ENABLED

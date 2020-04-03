@@ -26,22 +26,20 @@
 #import "config.h"
 #import "WKReloadFrameErrorRecoveryAttempter.h"
 
-#if WK_API_ENABLED
-
 #import "_WKErrorRecoveryAttempting.h"
 #import "_WKFrameHandleInternal.h"
 #import "WKWebViewInternal.h"
-#import "WeakObjCPtr.h"
 #import "WebFrameProxy.h"
 #import "WebPageProxy.h"
 #import "WebProcessProxy.h"
 #import <wtf/RetainPtr.h>
+#import <wtf/WeakObjCPtr.h>
 
 @interface WKReloadFrameErrorRecoveryAttempter () <_WKErrorRecoveryAttempting>
 @end
 
 @implementation WKReloadFrameErrorRecoveryAttempter {
-    WebKit::WeakObjCPtr<WKWebView> _webView;
+    WeakObjCPtr<WKWebView> _webView;
     RetainPtr<_WKFrameHandle> _frameHandle;
     String _urlString;
 }
@@ -69,10 +67,8 @@
     if (!webFrameProxy)
         return NO;
 
-    webFrameProxy->loadURL(WebCore::URL(WebCore::URL(), _urlString));
+    webFrameProxy->loadURL(URL(URL(), _urlString));
     return YES;
 }
 
 @end
-
-#endif

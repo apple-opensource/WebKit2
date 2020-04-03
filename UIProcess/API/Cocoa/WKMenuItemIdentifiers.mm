@@ -26,13 +26,13 @@
 #include "config.h"
 #include "WKMenuItemIdentifiersPrivate.h"
 
-#if WK_API_ENABLED
-
 NSString * const _WKMenuItemIdentifierCopy = @"WKMenuItemIdentifierCopy";
 NSString * const _WKMenuItemIdentifierCopyImage = @"WKMenuItemIdentifierCopyImage";
 NSString * const _WKMenuItemIdentifierCopyLink = @"WKMenuItemIdentifierCopyLink";
+NSString * const _WKMenuItemIdentifierCopyMediaLink = @"WKMenuItemIdentifierCopyMediaLink";
 NSString * const _WKMenuItemIdentifierDownloadImage = @"WKMenuItemIdentifierDownloadImage";
 NSString * const _WKMenuItemIdentifierDownloadLinkedFile = @"WKMenuItemIdentifierDownloadLinkedFile";
+NSString * const _WKMenuItemIdentifierDownloadMedia = @"WKMenuItemIdentifierDownloadMedia";
 NSString * const _WKMenuItemIdentifierGoBack = @"WKMenuItemIdentifierGoBack";
 NSString * const _WKMenuItemIdentifierGoForward = @"WKMenuItemIdentifierGoForward";
 NSString * const _WKMenuItemIdentifierInspectElement = @"WKMenuItemIdentifierInspectElement";
@@ -41,13 +41,13 @@ NSString * const _WKMenuItemIdentifierOpenFrameInNewWindow = @"WKMenuItemIdentif
 NSString * const _WKMenuItemIdentifierOpenImageInNewWindow = @"WKMenuItemIdentifierOpenImageInNewWindow";
 NSString * const _WKMenuItemIdentifierOpenLink = @"WKMenuItemIdentifierOpenLink";
 NSString * const _WKMenuItemIdentifierOpenLinkInNewWindow = @"WKMenuItemIdentifierOpenLinkInNewWindow";
+NSString * const _WKMenuItemIdentifierOpenMediaInNewWindow = @"WKMenuItemIdentifierOpenMediaInNewWindow";
 NSString * const _WKMenuItemIdentifierPaste = @"WKMenuItemIdentifierPaste";
 NSString * const _WKMenuItemIdentifierReload = @"WKMenuItemIdentifierReload";
 NSString * const _WKMenuItemIdentifierSearchWeb = @"WKMenuItemIdentifierSearchWeb";
 NSString * const _WKMenuItemIdentifierShowHideMediaControls = @"WKMenuItemIdentifierShowHideMediaControls";
+NSString * const _WKMenuItemIdentifierToggleEnhancedFullScreen = @"WKMenuItemIdentifierToggleEnhancedFullScreen";
 NSString * const _WKMenuItemIdentifierToggleFullScreen = @"WKMenuItemIdentifierToggleFullScreen";
 
 NSString * const _WKMenuItemIdentifierShareMenu = @"WKMenuItemIdentifierShareMenu";
 NSString * const _WKMenuItemIdentifierSpeechMenu = @"WKMenuItemIdentifierSpeechMenu";
-
-#endif

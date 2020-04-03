@@ -26,31 +26,30 @@
 #import "config.h"
 #import "WKNSURLExtras.h"
 
-#import <WebCore/CFURLExtras.h>
-#import <WebCore/URL.h>
+#import <wtf/URL.h>
+#import <wtf/cf/CFURLExtras.h>
 #import <wtf/text/CString.h>
 #import <wtf/text/WTFString.h>
-
-using namespace WebCore;
 
 @implementation NSURL (WKExtras)
 
 + (instancetype)_web_URLWithWTFString:(const String&)string
 {
     URL url { URL { }, string };
-    return (__bridge NSURL*) url.createCFURL().autorelease();
+    return (NSURL *)url;
 }
 
 + (instancetype)_web_URLWithWTFString:(const String&)string relativeToURL:(NSURL *)baseURL
 {
     URL url { URL { baseURL }, string };
-    return (__bridge NSURL*) url.createCFURL().autorelease();
+    return (NSURL *)url;
 }
 
 - (String)_web_originalDataAsWTFString
 {
+    // FIXME: Why is it OK to ignore base URL here?
     CString originalData;
-    getURLBytes((CFURLRef)self, originalData);
+    WTF::getURLBytes((__bridge CFURLRef)self, originalData);
     return String::fromUTF8(originalData);
 }
 

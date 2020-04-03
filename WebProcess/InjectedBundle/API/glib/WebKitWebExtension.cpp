@@ -26,6 +26,7 @@
 #include "WebKitWebExtensionPrivate.h"
 #include "WebKitWebPagePrivate.h"
 #include "WebProcess.h"
+#include <WebCore/GCController.h>
 #include <wtf/HashMap.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
@@ -118,6 +119,9 @@ typedef HashMap<WebPage*, GRefPtr<WebKitWebPage> > WebPageMap;
 
 struct _WebKitWebExtensionPrivate {
     WebPageMap pages;
+#if ENABLE(DEVELOPER_MODE)
+    bool garbageCollectOnPageDestroy;
+#endif
 };
 
 static guint signals[LAST_SIGNAL] = { 0, };
@@ -162,6 +166,10 @@ private:
     void willDestroyPage(InjectedBundle&, WebPage& page) override
     {
         m_extension->priv->pages.remove(&page);
+#if ENABLE(DEVELOPER_MODE)
+        if (m_extension->priv->garbageCollectOnPageDestroy)
+            WebCore::GCController::singleton().garbageCollectNow();
+#endif
     }
 
     void didReceiveMessage(InjectedBundle&, const String& messageName, API::Object* messageBody) override
@@ -192,6 +200,13 @@ WebKitWebExtension* webkitWebExtensionCreate(InjectedBundle* bundle)
     return extension;
 }
 
+void webkitWebExtensionSetGarbageCollectOnPageDestroy(WebKitWebExtension* extension)
+{
+#if ENABLE(DEVELOPER_MODE)
+    extension->priv->garbageCollectOnPageDestroy = true;
+#endif
+}
+
 /**
  * webkit_web_extension_get_page:
  * @extension: a #WebKitWebExtension
@@ -209,7 +224,7 @@ WebKitWebPage* webkit_web_extension_get_page(WebKitWebExtension* extension, guin
     WebKitWebExtensionPrivate* priv = extension->priv;
     WebPageMap::const_iterator end = priv->pages.end();
     for (WebPageMap::const_iterator it = priv->pages.begin(); it != end; ++it)
-        if (it->key->pageID() == pageID)
+        if (it->key->pageID().toUInt64() == pageID)
             return it->value.get();
 
     return 0;

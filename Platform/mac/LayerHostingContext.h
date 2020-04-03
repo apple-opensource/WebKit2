@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LayerHostingContext_h
-#define LayerHostingContext_h
+#pragma once
 
 #include "LayerTreeContext.h"
 #include <wtf/Forward.h>
@@ -34,19 +33,33 @@
 OBJC_CLASS CALayer;
 OBJC_CLASS CAContext;
 
-namespace WebCore {
+namespace WTF {
 class MachSendRight;
 }
 
 namespace WebKit {
 
+using LayerHostingContextID = uint32_t;
+    
+struct LayerHostingContextOptions {
+#if PLATFORM(IOS_FAMILY)
+    bool canShowWhileLocked { false };
+#endif
+};
+
 class LayerHostingContext {
     WTF_MAKE_NONCOPYABLE(LayerHostingContext); WTF_MAKE_FAST_ALLOCATED;
 public:
-    static std::unique_ptr<LayerHostingContext> createForPort(const WebCore::MachSendRight& serverPort);
+    static std::unique_ptr<LayerHostingContext> createForPort(const WTF::MachSendRight& serverPort);
+    
 #if HAVE(OUT_OF_PROCESS_LAYER_HOSTING)
-    static std::unique_ptr<LayerHostingContext> createForExternalHostingProcess();
+    static std::unique_ptr<LayerHostingContext> createForExternalHostingProcess(const LayerHostingContextOptions& = { });
+
+#if PLATFORM(MAC)
+    static std::unique_ptr<LayerHostingContext> createForExternalPluginHostingProcess();
 #endif
+    
+#endif // HAVE(OUT_OF_PROCESS_LAYER_HOSTING)
 
     LayerHostingContext();
     ~LayerHostingContext();
@@ -54,7 +67,7 @@ public:
     void setRootLayer(CALayer *);
     CALayer *rootLayer() const;
 
-    uint32_t contextID() const;
+    LayerHostingContextID contextID() const;
     void invalidate();
 
     LayerHostingMode layerHostingMode() { return m_layerHostingMode; }
@@ -73,7 +86,7 @@ public:
     // createFencePort does not install the fence port on the LayerHostingContext's
     // CAContext; call setFencePort() with the newly created port if synchronization
     // with this context is desired.
-    WebCore::MachSendRight createFencePort();
+    WTF::MachSendRight createFencePort();
 
 private:
     LayerHostingMode m_layerHostingMode;
@@ -82,4 +95,3 @@ private:
 
 } // namespace WebKit
 
-#endif // LayerHostingContext_h

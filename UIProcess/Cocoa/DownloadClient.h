@@ -27,10 +27,9 @@
 
 #import "WKFoundation.h"
 
-#if WK_API_ENABLED
-
 #import "APIDownloadClient.h"
-#import "WeakObjCPtr.h"
+#import "ProcessThrottler.h"
+#import <wtf/WeakObjCPtr.h>
 
 @protocol _WKDownloadDelegate;
 
@@ -42,6 +41,7 @@ class ResourceResponse;
 namespace WebKit {
 
 class DownloadClient final : public API::DownloadClient {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit DownloadClient(id <_WKDownloadDelegate>);
     
@@ -56,13 +56,19 @@ private:
     void didCancel(WebProcessPool&, DownloadProxy&) final;
     void willSendRequest(WebProcessPool&, DownloadProxy&, WebCore::ResourceRequest&&, const WebCore::ResourceResponse&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&) final;
     void didReceiveAuthenticationChallenge(WebProcessPool&, DownloadProxy&, AuthenticationChallengeProxy&) final;
-#if !USE(NETWORK_SESSION)
-    bool shouldDecodeSourceDataOfMIMEType(WebProcessPool&, DownloadProxy&, const String&) final;
-#endif
     void didCreateDestination(WebProcessPool&, DownloadProxy&, const String&) final;
     void processDidCrash(WebProcessPool&, DownloadProxy&) final;
 
+#if USE(SYSTEM_PREVIEW)
+    void takeActivityToken(DownloadProxy&);
+    void releaseActivityTokenIfNecessary(DownloadProxy&);
+#endif
+
     WeakObjCPtr<id <_WKDownloadDelegate>> m_delegate;
+
+#if PLATFORM(IOS_FAMILY) && USE(SYSTEM_PREVIEW)
+    ProcessThrottler::BackgroundActivityToken m_activityToken { nullptr };
+#endif
 
     struct {
         bool downloadDidStart : 1;            
@@ -82,5 +88,3 @@ private:
 };
 
 } // namespace WebKit
-
-#endif

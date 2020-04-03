@@ -26,13 +26,13 @@
 #import "config.h"
 #import "WKInspectorWKWebView.h"
 
-#if PLATFORM(MAC) && WK_API_ENABLED
+#if PLATFORM(MAC)
 
 #import "WKInspectorPrivateMac.h"
-#import "WeakObjCPtr.h"
+#import <wtf/WeakObjCPtr.h>
 
 @implementation WKInspectorWKWebView {
-    WebKit::WeakObjCPtr<id <WKInspectorWKWebViewDelegate>> _inspectorWKWebViewDelegate;
+    WeakObjCPtr<id <WKInspectorWKWebViewDelegate>> _inspectorWKWebViewDelegate;
 }
 
 - (NSInteger)tag
@@ -58,6 +58,18 @@
 - (IBAction)reloadFromOrigin:(id)sender
 {
     [self.inspectorWKWebViewDelegate inspectorWKWebViewReloadFromOrigin:self];
+}
+
+- (void)viewWillMoveToWindow:(NSWindow *)newWindow
+{
+    [super viewWillMoveToWindow:newWindow];
+    [self.inspectorWKWebViewDelegate inspectorWKWebView:self willMoveToWindow:newWindow];
+}
+
+- (void)viewDidMoveToWindow
+{
+    [super viewDidMoveToWindow];
+    [self.inspectorWKWebViewDelegate inspectorWKWebViewDidMoveToWindow:self];
 }
 
 @end

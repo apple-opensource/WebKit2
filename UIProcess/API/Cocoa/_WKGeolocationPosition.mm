@@ -26,11 +26,9 @@
 #import "config.h"
 #import "_WKGeolocationPositionInternal.h"
 
-#if WK_API_ENABLED && TARGET_OS_IPHONE
+#if PLATFORM(IOS_FAMILY)
 
 #import <CoreLocation/CLLocation.h>
-
-using namespace WebKit;
 
 @implementation _WKGeolocationPosition
 
@@ -39,7 +37,7 @@ using namespace WebKit;
     if (!location)
         return nil;
 
-    return [wrapper(WebGeolocationPosition::create(WebCore::GeolocationPosition { location }).leakRef()) autorelease];
+    return wrapper(WebKit::WebGeolocationPosition::create(WebCore::GeolocationPosition { location }));
 }
 
 - (void)dealloc
@@ -58,4 +56,4 @@ using namespace WebKit;
 
 @end
 
-#endif // WK_API_ENABLED && TARGET_OS_IPHONE
+#endif // PLATFORM(IOS_FAMILY)

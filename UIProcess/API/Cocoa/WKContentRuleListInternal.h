@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,18 +25,14 @@
 
 #import "WKContentRuleList.h"
 
-#if WK_API_ENABLED
-
 #import "APIContentRuleList.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline WKContentRuleList *wrapper(API::ContentRuleList& contentRuleList)
-{
-    ASSERT([contentRuleList.wrapper() isKindOfClass:[WKContentRuleList class]]);
-    return (WKContentRuleList *)contentRuleList.wrapper();
-}
+template<> struct WrapperTraits<API::ContentRuleList> {
+    using WrapperClass = WKContentRuleList;
+};
 
 }
 
@@ -45,5 +41,3 @@ inline WKContentRuleList *wrapper(API::ContentRuleList& contentRuleList)
     API::ObjectStorage<API::ContentRuleList> _contentRuleList;
 }
 @end
-
-#endif // WK_API_ENABLED

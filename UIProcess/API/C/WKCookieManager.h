@@ -68,11 +68,11 @@ WK_EXPORT void WKCookieManagerDeleteAllCookies(WKCookieManagerRef cookieManager)
 // The time here is relative to the Unix epoch.
 WK_EXPORT void WKCookieManagerDeleteAllCookiesModifiedAfterDate(WKCookieManagerRef cookieManager, double);
 
-WK_EXPORT void WKCookieManagerSetHTTPCookieAcceptPolicy(WKCookieManagerRef cookieManager, WKHTTPCookieAcceptPolicy policy);
+typedef void (*WKCookieManagerSetHTTPCookieAcceptPolicyFunction)(WKErrorRef, void*);
+WK_EXPORT void WKCookieManagerSetHTTPCookieAcceptPolicy(WKCookieManagerRef cookieManager, WKHTTPCookieAcceptPolicy policy, void* context, WKCookieManagerSetHTTPCookieAcceptPolicyFunction callback);
 typedef void (*WKCookieManagerGetHTTPCookieAcceptPolicyFunction)(WKHTTPCookieAcceptPolicy, WKErrorRef, void*);
 WK_EXPORT void WKCookieManagerGetHTTPCookieAcceptPolicy(WKCookieManagerRef cookieManager, void* context, WKCookieManagerGetHTTPCookieAcceptPolicyFunction callback);
 
-WK_EXPORT void WKCookieManagerSetCookieStoragePartitioningEnabled(WKCookieManagerRef cookieManager, bool enabled);
 WK_EXPORT void WKCookieManagerSetStorageAccessAPIEnabled(WKCookieManagerRef cookieManager, bool enabled);
 
 WK_EXPORT void WKCookieManagerStartObservingCookieChanges(WKCookieManagerRef cookieManager);

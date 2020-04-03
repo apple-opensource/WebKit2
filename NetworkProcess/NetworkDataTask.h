@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if USE(NETWORK_SESSION)
-
 #include "DownloadID.h"
 #include "SandboxExtension.h"
 #include <WebCore/Credential.h>
@@ -48,11 +46,10 @@ class SharedBuffer;
 
 namespace WebKit {
 
-class Download;
 class NetworkLoadParameters;
 class NetworkSession;
 class PendingDownload;
-enum class AuthenticationChallengeDisposition;
+enum class AuthenticationChallengeDisposition : uint8_t;
 
 using RedirectCompletionHandler = CompletionHandler<void(WebCore::ResourceRequest&&)>;
 using ChallengeCompletionHandler = CompletionHandler<void(AuthenticationChallengeDisposition, const WebCore::Credential&)>;
@@ -61,13 +58,14 @@ using ResponseCompletionHandler = CompletionHandler<void(WebCore::PolicyAction)>
 class NetworkDataTaskClient {
 public:
     virtual void willPerformHTTPRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, RedirectCompletionHandler&&) = 0;
-    virtual void didReceiveChallenge(const WebCore::AuthenticationChallenge&, ChallengeCompletionHandler&&) = 0;
-    virtual void didReceiveResponseNetworkSession(WebCore::ResourceResponse&&, ResponseCompletionHandler&&) = 0;
+    virtual void didReceiveChallenge(WebCore::AuthenticationChallenge&&, ChallengeCompletionHandler&&) = 0;
+    virtual void didReceiveResponse(WebCore::ResourceResponse&&, ResponseCompletionHandler&&) = 0;
     virtual void didReceiveData(Ref<WebCore::SharedBuffer>&&) = 0;
     virtual void didCompleteWithError(const WebCore::ResourceError&, const WebCore::NetworkLoadMetrics&) = 0;
     virtual void didSendData(uint64_t totalBytesSent, uint64_t totalBytesExpectedToSend) = 0;
     virtual void wasBlocked() = 0;
     virtual void cannotShowURL() = 0;
+    virtual void wasBlockedByRestrictions() = 0;
 
     virtual bool shouldCaptureExtraNetworkLoadMetrics() const { return false; }
 
@@ -80,13 +78,12 @@ public:
     virtual ~NetworkDataTaskClient() { }
 };
 
-class NetworkDataTask : public RefCounted<NetworkDataTask> {
+class NetworkDataTask : public RefCounted<NetworkDataTask>, public CanMakeWeakPtr<NetworkDataTask> {
 public:
     static Ref<NetworkDataTask> create(NetworkSession&, NetworkDataTaskClient&, const NetworkLoadParameters&);
 
     virtual ~NetworkDataTask();
 
-    virtual void suspend() = 0;
     virtual void cancel() = 0;
     virtual void resume() = 0;
     virtual void invalidateAndCancel() = 0;
@@ -130,13 +127,16 @@ public:
 
     bool isTopLevelNavigation() const { return m_dataTaskIsForMainFrameNavigation; }
 
+    virtual String description() const;
+
 protected:
     NetworkDataTask(NetworkSession&, NetworkDataTaskClient&, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, bool shouldClearReferrerOnHTTPSToHTTPRedirect, bool dataTaskIsForMainFrameNavigation);
 
     enum FailureType {
         NoFailure,
         BlockedFailure,
-        InvalidURLFailure
+        InvalidURLFailure,
+        RestrictedURLFailure
     };
     void failureTimerFired();
     void scheduleFailure(FailureType);
@@ -163,5 +163,3 @@ protected:
 };
 
 } // namespace WebKit
-
-#endif // USE(NETWORK_SESSION)

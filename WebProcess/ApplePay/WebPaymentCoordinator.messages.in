@@ -31,9 +31,7 @@ messages -> WebPaymentCoordinator {
     DidSelectShippingMethod(WebCore::ApplePaySessionPaymentRequest::ShippingMethod shippingMethod)
     DidSelectShippingContact(WebCore::PaymentContact shippingContact)
     DidSelectPaymentMethod(WebCore::PaymentMethod paymentMethod)
-    DidCancelPaymentSession()
-    CanMakePaymentsWithActiveCardReply(uint64_t requestID, bool canMakePayments)
-    OpenPaymentSetupReply(uint64_t requestID, bool result)
+    DidCancelPaymentSession(WebCore::PaymentSessionError sessionError)
 }
 
 #endif

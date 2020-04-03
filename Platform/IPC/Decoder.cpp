@@ -44,7 +44,7 @@ static const uint8_t* copyBuffer(const uint8_t* buffer, size_t bufferSize)
     return bufferCopy;
 }
 
-Decoder::Decoder(const uint8_t* buffer, size_t bufferSize, void (*bufferDeallocator)(const uint8_t*, size_t), Vector<Attachment> attachments)
+Decoder::Decoder(const uint8_t* buffer, size_t bufferSize, void (*bufferDeallocator)(const uint8_t*, size_t), Vector<Attachment>&& attachments)
     : m_buffer { bufferDeallocator ? buffer : copyBuffer(buffer, bufferSize) }
     , m_bufferPos { m_buffer }
     , m_bufferEnd { m_buffer + bufferSize }
@@ -88,9 +88,13 @@ bool Decoder::isSyncMessage() const
     return m_messageFlags & SyncMessage;
 }
 
-bool Decoder::shouldDispatchMessageWhenWaitingForSyncReply() const
+ShouldDispatchWhenWaitingForSyncReply Decoder::shouldDispatchMessageWhenWaitingForSyncReply() const
 {
-    return m_messageFlags & DispatchMessageWhenWaitingForSyncReply;
+    if (m_messageFlags & DispatchMessageWhenWaitingForSyncReply)
+        return ShouldDispatchWhenWaitingForSyncReply::Yes;
+    if (m_messageFlags & DispatchMessageWhenWaitingForUnboundedSyncReply)
+        return ShouldDispatchWhenWaitingForSyncReply::YesDuringUnboundedIPC;
+    return ShouldDispatchWhenWaitingForSyncReply::No;
 }
 
 bool Decoder::shouldUseFullySynchronousModeForTesting() const
@@ -189,7 +193,7 @@ static void decodeValueFromBuffer(Type& value, const uint8_t*& bufferPosition)
 }
 
 template<typename Type>
-Decoder& Decoder::getOptional(std::optional<Type>& optional)
+Decoder& Decoder::getOptional(Optional<Type>& optional)
 {
     Type result;
     if (!alignBufferPosition(sizeof(result), sizeof(result)))
@@ -200,52 +204,52 @@ Decoder& Decoder::getOptional(std::optional<Type>& optional)
     return *this;
 }
 
-Decoder& Decoder::operator>>(std::optional<bool>& optional)
+Decoder& Decoder::operator>>(Optional<bool>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<uint8_t>& optional)
+Decoder& Decoder::operator>>(Optional<uint8_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<uint16_t>& optional)
+Decoder& Decoder::operator>>(Optional<uint16_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<uint32_t>& optional)
+Decoder& Decoder::operator>>(Optional<uint32_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<uint64_t>& optional)
+Decoder& Decoder::operator>>(Optional<uint64_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<int16_t>& optional)
+Decoder& Decoder::operator>>(Optional<int16_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<int32_t>& optional)
+Decoder& Decoder::operator>>(Optional<int32_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<int64_t>& optional)
+Decoder& Decoder::operator>>(Optional<int64_t>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<float>& optional)
+Decoder& Decoder::operator>>(Optional<float>& optional)
 {
     return getOptional(optional);
 }
 
-Decoder& Decoder::operator>>(std::optional<double>& optional)
+Decoder& Decoder::operator>>(Optional<double>& optional)
 {
     return getOptional(optional);
 }

@@ -28,7 +28,6 @@
 #ifndef WebKitWebView_h
 #define WebKitWebView_h
 
-#include <JavaScriptCore/JSBase.h>
 #include <wpe/WebKitAuthenticationRequest.h>
 #include <wpe/WebKitBackForwardList.h>
 #include <wpe/WebKitContextMenu.h>
@@ -50,6 +49,7 @@
 #include <wpe/WebKitWebContext.h>
 #include <wpe/WebKitWebResource.h>
 #include <wpe/WebKitWebViewBackend.h>
+#include <wpe/WebKitColor.h>
 #include <wpe/WebKitWebViewSessionState.h>
 #include <wpe/WebKitWindowProperties.h>
 
@@ -166,6 +166,18 @@ typedef enum {
     WEBKIT_WEB_PROCESS_CRASHED,
     WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT
 } WebKitWebProcessTerminationReason;
+
+/**
+ * WebKitFrameDisplayedCallback:
+ * @web_view: a #WebKitWebView
+ * @user_data: user data
+ *
+ * Callback to be called when a frame is displayed in a #webKitWebView.
+ *
+ * Since: 2.24
+ */
+typedef void (* WebKitFrameDisplayedCallback) (WebKitWebView *web_view,
+                                               gpointer       user_data);
 
 struct _WebKitWebView {
     GObject parent;
@@ -400,9 +412,6 @@ webkit_web_view_execute_editing_command_with_argument(WebKitWebView             
 WEBKIT_API WebKitFindController *
 webkit_web_view_get_find_controller                  (WebKitWebView             *web_view);
 
-WEBKIT_API JSGlobalContextRef
-webkit_web_view_get_javascript_global_context        (WebKitWebView             *web_view);
-
 WEBKIT_API void
 webkit_web_view_run_javascript                       (WebKitWebView             *web_view,
                                                       const gchar               *script,
@@ -411,6 +420,18 @@ webkit_web_view_run_javascript                       (WebKitWebView             
                                                       gpointer                   user_data);
 WEBKIT_API WebKitJavascriptResult *
 webkit_web_view_run_javascript_finish                (WebKitWebView             *web_view,
+                                                      GAsyncResult              *result,
+                                                      GError                   **error);
+
+WEBKIT_API void
+webkit_web_view_run_javascript_in_world              (WebKitWebView             *web_view,
+                                                      const gchar               *script,
+                                                      const gchar               *world_name,
+                                                      GCancellable              *cancellable,
+                                                      GAsyncReadyCallback        callback,
+                                                      gpointer                   user_data);
+WEBKIT_API WebKitJavascriptResult *
+webkit_web_view_run_javascript_in_world_finish       (WebKitWebView             *web_view,
                                                       GAsyncResult              *result,
                                                       GError                   **error);
 
@@ -486,6 +507,23 @@ webkit_web_view_get_session_state                    (WebKitWebView             
 WEBKIT_API void
 webkit_web_view_restore_session_state                (WebKitWebView             *web_view,
                                                       WebKitWebViewSessionState *state);
+
+WEBKIT_API guint
+webkit_web_view_add_frame_displayed_callback         (WebKitWebView               *web_view,
+                                                      WebKitFrameDisplayedCallback callback,
+                                                      gpointer                     user_data,
+                                                      GDestroyNotify               destroy_notify);
+
+WEBKIT_API void
+webkit_web_view_remove_frame_displayed_callback      (WebKitWebView               *web_view,
+                                                      guint                        id);
+
+WEBKIT_API void
+webkit_web_view_set_background_color                 (WebKitWebView               *web_view,
+                                                      WebKitColor                 *color);
+WEBKIT_API void
+webkit_web_view_get_background_color                 (WebKitWebView               *web_view,
+                                                      WebKitColor                 *color);
 
 G_END_DECLS
 

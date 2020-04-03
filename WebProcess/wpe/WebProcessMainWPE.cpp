@@ -27,51 +27,75 @@
 #include "config.h"
 #include "WebProcessMainUnix.h"
 
-#include "ChildProcessMain.h"
+#include "AuxiliaryProcessMain.h"
 #include "WebProcess.h"
-#include <WebCore/PlatformDisplayWPE.h>
 #include <glib.h>
-#include <iostream>
-#include <libsoup/soup.h>
 
-using namespace WebCore;
+#if ENABLE(ACCESSIBILITY)
+#include <atk-bridge.h>
+#include <atk/atk.h>
+#endif
 
 namespace WebKit {
+using namespace WebCore;
 
-class WebProcessMain final: public ChildProcessMainBase {
+#if ENABLE(ACCESSIBILITY)
+static void initializeAccessibility()
+{
+    auto* atkUtilClass = ATK_UTIL_CLASS(g_type_class_ref(ATK_TYPE_UTIL));
+
+    atkUtilClass->add_key_event_listener = [](AtkKeySnoopFunc, gpointer) -> guint {
+        return 0;
+    };
+
+    atkUtilClass->remove_key_event_listener = [](guint) {
+    };
+
+    atkUtilClass->get_root = []() -> AtkObject* {
+        // ATK bridge needs a root object. We use an AtkPlug because that way the
+        // web process is not registered as an application.
+        static AtkObject* root = nullptr;
+        if (!root)
+            root = atk_plug_new();
+        return root;
+    };
+
+    atkUtilClass->get_toolkit_name = []() -> const gchar* {
+        return "WPEWebKit";
+    };
+
+    atkUtilClass->get_toolkit_version = []() -> const gchar* {
+        return "";
+    };
+
+    atk_bridge_adaptor_init(nullptr, nullptr);
+}
+#endif
+
+class WebProcessMain final : public AuxiliaryProcessMainBase {
 public:
     bool platformInitialize() override
     {
 #if ENABLE(DEVELOPER_MODE)
         if (g_getenv("WEBKIT2_PAUSE_WEB_PROCESS_ON_LAUNCH"))
-            WTF::sleep(30);
+            WTF::sleep(30_s);
 #endif
 
-        return true;
-    }
+        // Required for GStreamer initialization.
+        // FIXME: This should be probably called in other processes as well.
+        g_set_prgname("WPEWebProcess");
 
-    bool parseCommandLine(int argc, char** argv) override
-    {
-        ASSERT(argc == 4);
-        if (argc < 4)
-            return false;
+#if ENABLE(ACCESSIBILITY)
+        initializeAccessibility();
+#endif
 
-        if (!ChildProcessMainBase::parseCommandLine(argc, argv))
-            return false;
-
-        int wpeFd = atoi(argv[3]);
-        RunLoop::main().dispatch(
-            [wpeFd] {
-                RELEASE_ASSERT(is<PlatformDisplayWPE>(PlatformDisplay::sharedDisplay()));
-                downcast<PlatformDisplayWPE>(PlatformDisplay::sharedDisplay()).initialize(wpeFd);
-            });
         return true;
     }
 };
 
 int WebProcessMainUnix(int argc, char** argv)
 {
-    return ChildProcessMain<WebProcess, WebProcessMain>(argc, argv);
+    return AuxiliaryProcessMain<WebProcess, WebProcessMain>(argc, argv);
 }
 
 } // namespace WebKit

@@ -33,7 +33,7 @@
 #import "PDFPlugin.h"
 #import "PDFPluginChoiceAnnotation.h"
 #import "PDFPluginTextAnnotation.h"
-#import <PDFKit/PDFKit.h>
+#import <Quartz/Quartz.h>
 #import <WebCore/CSSPrimitiveValue.h>
 #import <WebCore/CSSPropertyNames.h>
 #import <WebCore/ColorMac.h>
@@ -46,10 +46,8 @@
 #import <WebCore/HTMLTextAreaElement.h>
 #import <WebCore/Page.h>
 
-using namespace WebCore;
-
 namespace WebKit {
-
+using namespace WebCore;
 using namespace HTMLNames;
 
 RefPtr<PDFPluginAnnotation> PDFPluginAnnotation::create(PDFAnnotation *annotation, PDFLayerController *pdfLayerController, PDFPlugin* plugin)
@@ -69,8 +67,8 @@ void PDFPluginAnnotation::attach(Element* parent)
     m_parent = parent;
     m_element = createAnnotationElement();
 
-    m_element->setAttributeWithoutSynchronization(classAttr, AtomicString("annotation", AtomicString::ConstructFromLiteral));
-    m_element->setAttributeWithoutSynchronization(x_apple_pdf_annotationAttr, AtomicString("true", AtomicString::ConstructFromLiteral));
+    m_element->setAttributeWithoutSynchronization(classAttr, AtomString("annotation", AtomString::ConstructFromLiteral));
+    m_element->setAttributeWithoutSynchronization(x_apple_pdf_annotationAttr, AtomString("true", AtomString::ConstructFromLiteral));
     m_element->addEventListener(eventNames().changeEvent, *m_eventListener, false);
     m_element->addEventListener(eventNames().blurEvent, *m_eventListener, false);
 

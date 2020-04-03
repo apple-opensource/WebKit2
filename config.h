@@ -28,20 +28,16 @@
 #include "cmakeconfig.h"
 #endif
 
+#include <JavaScriptCore/JSExportMacros.h>
 #include <WebCore/PlatformExportMacros.h>
 #include <pal/ExportMacros.h>
-#include <runtime/JSExportMacros.h>
 #include <wtf/DisallowCType.h>
 
 #if PLATFORM(WIN)
-
-#ifndef _WINSOCKAPI_
-#define _WINSOCKAPI_ // Prevent inclusion of winsock.h in windows.h
-#endif
-
 #undef WEBCORE_EXPORT
 #define WEBCORE_EXPORT WTF_EXPORT_DECLARATION
-
+#undef WEBCORE_TESTSUPPORT_EXPORT
+#define WEBCORE_TESTSUPPORT_EXPORT WTF_EXPORT_DECLARATION
 #endif // PLATFORM(WIN)
 
 #ifdef __cplusplus
@@ -66,77 +62,12 @@
 
 #define PLUGIN_ARCHITECTURE(ARCH) (defined PLUGIN_ARCHITECTURE_##ARCH && PLUGIN_ARCHITECTURE_##ARCH)
 
-#ifndef ENABLE_SEC_ITEM_SHIM
-#if PLATFORM(MAC) || PLATFORM(IOS)
-#define ENABLE_SEC_ITEM_SHIM 1
-#endif
-#endif
-
-#if PLATFORM(MAC)
-#ifndef HAVE_WINDOW_SERVER_OCCLUSION_NOTIFICATIONS
-#define HAVE_WINDOW_SERVER_OCCLUSION_NOTIFICATIONS 1
-#endif
-#endif
-
-#if (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101200) || PLATFORM(IOS) || PLATFORM(APPLETV) || PLATFORM(WATCHOS) || USE(SOUP)
-#ifndef USE_NETWORK_SESSION
-#define USE_NETWORK_SESSION 1
-#endif
-
-#ifndef ENABLE_BEACON_API
-#define ENABLE_BEACON_API 1
-#endif
-
-// FIXME: We should work towards not using CredentialStorage in WebKit2 to not have problems with digest authentication.
+// FIXME: We should work towards not using CredentialStorage in WebKit to not have problems with digest authentication.
 #ifndef USE_CREDENTIAL_STORAGE_WITH_NETWORK_SESSION
 #define USE_CREDENTIAL_STORAGE_WITH_NETWORK_SESSION 1
 #endif
-#endif
 
-#if USE(NETWORK_SESSION) && ((PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101300) || (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 110000))
-#ifndef ENABLE_SERVER_PRECONNECT
-#define ENABLE_SERVER_PRECONNECT 1
-#endif
-#endif
-
-#ifndef HAVE_SEC_ACCESS_CONTROL
-#if PLATFORM(IOS) || PLATFORM(MAC)
-#define HAVE_SEC_ACCESS_CONTROL 1
-#endif
-#endif
-
-#ifndef HAVE_OS_ACTIVITY
-#if PLATFORM(IOS) || PLATFORM(MAC)
-#define HAVE_OS_ACTIVITY 1
-#endif
-#endif
-
-#ifndef ENABLE_NETWORK_CAPTURE
-#if USE(NETWORK_SESSION) && PLATFORM(COCOA)
-#define ENABLE_NETWORK_CAPTURE 1
-#endif
-#endif
-
-#ifndef ENABLE_NETWORK_CACHE_SPECULATIVE_REVALIDATION
-#if (PLATFORM(COCOA) || PLATFORM(GTK))
-#define ENABLE_NETWORK_CACHE_SPECULATIVE_REVALIDATION 1
-#else
-#define ENABLE_NETWORK_CACHE_SPECULATIVE_REVALIDATION 0
-#endif
-#endif
-
-#ifndef HAVE_SAFARI_SERVICES_FRAMEWORK
-#if PLATFORM(IOS) && (!defined TARGET_OS_IOS || TARGET_OS_IOS)
-#define HAVE_SAFARI_SERVICES_FRAMEWORK 1
-#else
-#define HAVE_SAFARI_SERVICES_FRAMEWORK 0
-#endif
-#endif
-
-#ifndef HAVE_LINK_PREVIEW
-#if defined TARGET_OS_IOS && TARGET_OS_IOS
-#define HAVE_LINK_PREVIEW 1
-#else
-#define HAVE_LINK_PREVIEW 0
-#endif
+// ENABLE_WEBDRIVER_ACTIONS_API represents whether mouse, keyboard or touch interactions are defined
+#if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS) || ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS) || ENABLE(WEBDRIVER_TOUCH_INTERACTIONS)
+#define ENABLE_WEBDRIVER_ACTIONS_API 1
 #endif

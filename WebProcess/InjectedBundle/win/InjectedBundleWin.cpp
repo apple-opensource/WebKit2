@@ -28,18 +28,21 @@
 
 #include "WKBundleAPICast.h"
 #include "WKBundleInitialize.h"
-#include <WebCore/FileSystem.h>
-#include <wtf/text/CString.h>
-
-using namespace WebCore;
 
 namespace WebKit {
 
-typedef void (*BundleInitializeFunction)(WKBundleRef, WKTypeRef);
-
 bool InjectedBundle::initialize(const WebProcessCreationParameters&, API::Object* initializationUserData)
 {
-    return false;
+    HMODULE lib = ::LoadLibrary(m_path.wideCharacters().data());
+    if (!lib)
+        return false;
+
+    WKBundleInitializeFunctionPtr proc = reinterpret_cast<WKBundleInitializeFunctionPtr>(::GetProcAddress(lib, "WKBundleInitialize"));
+    if (!proc)
+        return false;
+
+    proc(toAPI(this), toAPI(initializationUserData));
+    return true;
 }
 
 void InjectedBundle::setBundleParameter(WTF::String const&, IPC::DataReference const&)

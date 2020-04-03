@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,22 +25,18 @@
 
 #import "WKConnection.h"
 
-#if WK_API_ENABLED
-
 #import "WKObject.h"
 #import "WebConnection.h"
 
 namespace WebKit {
 
-inline WKConnection *wrapper(WebConnection& connection)
-{
-    ASSERT([connection.wrapper() isKindOfClass:[WKConnection class]]);
-    return (WKConnection *)connection.wrapper();
-}
+template<> struct WrapperTraits<WebConnection> {
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    using WrapperClass = WKConnection;
+    ALLOW_DEPRECATED_DECLARATIONS_END
+};
 
 }
 
 @interface WKConnection () <WKObject>
 @end
-
-#endif // WK_API_ENABLED

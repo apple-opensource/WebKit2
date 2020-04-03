@@ -31,9 +31,8 @@
 #include <WebCore/PlatformPasteboard.h>
 #include <wtf/SetForScope.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 void WebPasteboardProxy::writeToClipboard(const String& pasteboardName, const WebSelectionData& selection)
 {
@@ -45,9 +44,9 @@ void WebPasteboardProxy::writeToClipboard(const String& pasteboardName, const We
     });
 }
 
-void WebPasteboardProxy::readFromClipboard(const String& pasteboardName, WebSelectionData& selection)
+void WebPasteboardProxy::readFromClipboard(const String& pasteboardName, CompletionHandler<void(WebSelectionData&&)>&& completionHandler)
 {
-    selection = WebSelectionData(PlatformPasteboard(pasteboardName).readFromClipboard());
+    completionHandler(WebSelectionData(PlatformPasteboard(pasteboardName).readFromClipboard()));
 }
 
 void WebPasteboardProxy::setPrimarySelectionOwner(WebFrameProxy* frame)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,19 +25,16 @@
 
 #import "_WKHitTestResult.h"
 
-#if WK_API_ENABLED && PLATFORM(MAC)
+#if PLATFORM(MAC)
 
 #import "APIHitTestResult.h"
 #import "WKObject.h"
 
-namespace API {
+namespace WebKit {
 
-inline _WKHitTestResult *wrapper(API::HitTestResult& hitTestResult)
-{
-    ASSERT([hitTestResult.wrapper() isKindOfClass:[_WKHitTestResult class]]);
-
-    return (_WKHitTestResult *)hitTestResult.wrapper();
-}
+template<> struct WrapperTraits<API::HitTestResult> {
+    using WrapperClass = _WKHitTestResult;
+};
 
 }
 

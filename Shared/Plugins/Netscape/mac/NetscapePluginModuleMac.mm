@@ -34,9 +34,8 @@
 #import <wtf/MainThread.h>
 #import <wtf/spi/cf/CFBundleSPI.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 static bool getPluginArchitecture(CFBundleRef bundle, PluginModuleInfo& plugin)
 {
@@ -59,18 +58,6 @@ static bool getPluginArchitecture(CFBundleRef bundle, PluginModuleInfo& plugin)
     // We only support 64-bit Intel plug-ins on 64-bit Intel.
     if (architectures.contains(kCFBundleExecutableArchitectureX86_64)) {
         plugin.pluginArchitecture = CPU_TYPE_X86_64;
-        return true;
-    }
-
-    // We also support 32-bit Intel plug-ins on 64-bit Intel.
-    if (architectures.contains(kCFBundleExecutableArchitectureI386)) {
-        plugin.pluginArchitecture = CPU_TYPE_X86;
-        return true;
-    }
-#elif defined(__i386__)
-    // We only support 32-bit Intel plug-ins on 32-bit Intel.
-    if (architectures.contains(kCFBundleExecutableArchitectureI386)) {
-        plugin.pluginArchitecture = CPU_TYPE_X86;
         return true;
     }
 #endif
@@ -149,8 +136,7 @@ static bool getPluginInfoFromPropertyLists(CFBundleRef bundle, PluginModuleInfo&
             // The DivX plug-in lists multiple extensions in a comma separated string instead of using
             // multiple array elements in the property list. Work around this here by splitting the
             // extension string into components.
-            Vector<String> extensionComponents;
-            String(extension).convertToASCIILowercase().split(',', extensionComponents);
+            Vector<String> extensionComponents = String(extension).convertToASCIILowercase().split(',');
 
             for (auto& component : extensionComponents)
                 mimeClassInfo.extensions.append(component);
@@ -237,8 +223,7 @@ PluginVersion PluginVersion::parse(const String& versionString)
 {
     PluginVersion version;
 
-    Vector<String> versionStringComponents;
-    versionString.split('.', versionStringComponents);
+    Vector<String> versionStringComponents = versionString.split('.');
     for (size_t i = 0; i < versionStringComponents.size(); ++i) {
         bool successfullyParsed = false;
         unsigned versionComponent = versionStringComponents[i].toUInt(&successfullyParsed);
@@ -302,27 +287,7 @@ void NetscapePluginModule::determineQuirks()
         // understand the parameter names specified in the <object> element that
         // embeds its plug-in. 
         m_pluginQuirks.add(PluginQuirks::WantsLowercaseParameterNames);
-
-#ifndef NP_NO_QUICKDRAW
-        // The AppleConnect plug-in uses QuickDraw but doesn't paint or receive events
-        // so we'll allow it to be instantiated even though we don't support QuickDraw.
-        m_pluginQuirks.add(PluginQuirks::AllowHalfBakedQuickDrawSupport);
-#endif
     }
-
-#ifndef NP_NO_QUICKDRAW
-    if (plugin.bundleIdentifier == "com.microsoft.sharepoint.browserplugin") {
-        // The Microsoft SharePoint plug-in uses QuickDraw but doesn't paint or receive events
-        // so we'll allow it to be instantiated even though we don't support QuickDraw.
-        m_pluginQuirks.add(PluginQuirks::AllowHalfBakedQuickDrawSupport);
-    }
-
-    if (plugin.bundleIdentifier == "com.jattesaker.macid2.NPPlugin") {
-        // The BankID plug-in uses QuickDraw but doesn't paint or receive events
-        // so we'll allow it to be instantiated even though we don't support QuickDraw.
-        m_pluginQuirks.add(PluginQuirks::AllowHalfBakedQuickDrawSupport);
-    }
-#endif
 
     if (plugin.bundleIdentifier == "com.adobe.acrobat.pdfviewerNPAPI" || plugin.bundleIdentifier == "com.apple.testnetscapeplugin") {
         // The Adobe Reader plug-in wants wheel events.

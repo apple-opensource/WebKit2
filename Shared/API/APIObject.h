@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef APIObject_h
-#define APIObject_h
+#pragma once
 
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -37,7 +36,7 @@
 #endif
 #endif
 
-#define DELEGATE_REF_COUNTING_TO_COCOA (PLATFORM(COCOA) && WK_API_ENABLED)
+#define DELEGATE_REF_COUNTING_TO_COCOA PLATFORM(COCOA)
 
 #if DELEGATE_REF_COUNTING_TO_COCOA
 OBJC_CLASS NSObject;
@@ -89,6 +88,7 @@ public:
         Boolean,
         Double,
         UInt64,
+        Int64,
         
         // Geometry types
         Point,
@@ -107,9 +107,15 @@ public:
         CacheManager,
         ColorPickerResultListener,
         ContentRuleList,
+        ContentRuleListAction,
         ContentRuleListStore,
+#if PLATFORM(IOS_FAMILY)
+        ContextMenuElementInfo,
+#endif
         ContextMenuListener,
         CookieManager,
+        CustomHeaderFields,
+        InternalDebugFeature,
         Download,
         ExperimentalFeature,
         FormSubmissionListener,
@@ -127,6 +133,7 @@ public:
         Inspector,
         KeyValueStorageManager,
         MediaCacheManager,
+        MessageListener,
         Navigation,
         NavigationAction,
         NavigationData,
@@ -144,6 +151,7 @@ public:
         ProcessPoolConfiguration,
         PluginSiteDataManager,
         Preferences,
+        RequestStorageAccessConfirmResultListener,
         ResourceLoadStatisticsStore,
         RunBeforeUnloadConfirmPanelResultListener,
         RunJavaScriptAlertResultListener,
@@ -161,6 +169,7 @@ public:
         WebResourceLoadStatisticsManager,
         WebsiteDataRecord,
         WebsiteDataStore,
+        WebsiteDataStoreConfiguration,
         WebsitePolicies,
         WindowFeatures,
 
@@ -175,7 +184,6 @@ public:
         BundleBackForwardListItem,
         BundleCSSStyleDeclarationHandle,
         BundleDOMWindowExtension,
-        BundleFileHandle,
         BundleFrame,
         BundleHitTestResult,
         BundleInspector,
@@ -214,16 +222,16 @@ public:
     }
 #endif
 
-    NSObject *wrapper() { return m_wrapper; }
+    NSObject *wrapper() const { return m_wrapper; }
 
-    void ref();
-    void deref();
+    void ref() const;
+    void deref() const;
 #endif // DELEGATE_REF_COUNTING_TO_COCOA
 
     static void* wrap(API::Object*);
     static API::Object* unwrap(void*);
 
-#if PLATFORM(COCOA) && WK_API_ENABLED && defined(__OBJC__)
+#if PLATFORM(COCOA) && defined(__OBJC__)
     static API::Object& fromWKObjectExtraSpace(id <WKObject>);
 #endif
 
@@ -280,5 +288,3 @@ inline API::Object* Object::unwrap(void* object)
 } // namespace Object
 
 #undef DELEGATE_REF_COUNTING_TO_COCOA
-
-#endif // APIObject_h

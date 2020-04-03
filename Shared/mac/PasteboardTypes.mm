@@ -47,17 +47,13 @@ static inline NSArray *retain(NSArray *array)
 NSArray* PasteboardTypes::forEditing()
 {
     static NSArray *types = retain([NSArray arrayWithObjects:WebArchivePboardType, WebCore::legacyHTMLPasteboardType(), WebCore::legacyFilenamesPasteboardType(), WebCore::legacyTIFFPasteboardType(), WebCore::legacyPDFPasteboardType(),
-        WebCore::legacyURLPasteboardType(), WebCore::legacyRTFDPasteboardType(), WebCore::legacyRTFPasteboardType(), WebCore::legacyStringPasteboardType(), WebCore::legacyColorPasteboardType(), kUTTypePNG, nil]);
+        WebCore::legacyURLPasteboardType(), WebCore::legacyRTFDPasteboardType(), WebCore::legacyRTFPasteboardType(), WebCore::legacyStringPasteboardType(), WebCore::legacyColorPasteboardType(), (__bridge NSString *)kUTTypePNG, nil]);
     return types;
 }
 
 NSArray* PasteboardTypes::forURL()
 {
-    static NSArray *types = retain([NSArray arrayWithObjects:WebURLsWithTitlesPboardType, WebCore::legacyURLPasteboardType(), WebURLPboardType,  WebURLNamePboardType, WebCore::legacyStringPasteboardType(), WebCore::legacyFilenamesPasteboardType(),
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 101200
-        WebCore::legacyFilesPromisePasteboardType(),
-#endif
-        nil]);
+    static NSArray *types = retain([NSArray arrayWithObjects:WebURLsWithTitlesPboardType, WebCore::legacyURLPasteboardType(), WebURLPboardType,  WebURLNamePboardType, WebCore::legacyStringPasteboardType(), WebCore::legacyFilenamesPasteboardType(), WebCore::legacyFilesPromisePasteboardType(), nil]);
     return types;
 }
 

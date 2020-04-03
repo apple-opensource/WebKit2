@@ -28,13 +28,13 @@
 
 #include "VisitedLinkStoreMessages.h"
 #include "VisitedLinkTableControllerMessages.h"
+#include "WebPageProxy.h"
 #include "WebProcessMessages.h"
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 Ref<VisitedLinkStore> VisitedLinkStore::create()
 {
@@ -43,10 +43,7 @@ Ref<VisitedLinkStore> VisitedLinkStore::create()
 
 VisitedLinkStore::~VisitedLinkStore()
 {
-    for (WebProcessProxy* process : m_processes) {
-        process->removeMessageReceiver(Messages::VisitedLinkStore::messageReceiverName(), identifier());
-        process->didDestroyVisitedLinkStore(*this);
-    }
+    RELEASE_ASSERT(m_processes.isEmpty());
 }
 
 VisitedLinkStore::VisitedLinkStore()
@@ -57,6 +54,7 @@ VisitedLinkStore::VisitedLinkStore()
 void VisitedLinkStore::addProcess(WebProcessProxy& process)
 {
     ASSERT(process.state() == WebProcessProxy::State::Running);
+    ASSERT(!m_processes.contains(&process));
 
     if (!m_processes.add(&process).isNewEntry)
         return;
@@ -71,9 +69,9 @@ void VisitedLinkStore::addProcess(WebProcessProxy& process)
 
 void VisitedLinkStore::removeProcess(WebProcessProxy& process)
 {
-    ASSERT(m_processes.contains(&process));
+    if (!m_processes.remove(&process))
+        return;
 
-    m_processes.remove(&process);
     process.removeMessageReceiver(Messages::VisitedLinkStore::messageReceiverName(), identifier());
 }
 
@@ -102,17 +100,7 @@ void VisitedLinkStore::removeAll()
     }
 }
 
-void VisitedLinkStore::webProcessWillOpenConnection(WebProcessProxy&, IPC::Connection&)
-{
-    // FIXME: Implement.
-}
-
-void VisitedLinkStore::webProcessDidCloseConnection(WebProcessProxy&, IPC::Connection&)
-{
-    // FIXME: Implement.
-}
-
-void VisitedLinkStore::addVisitedLinkHashFromPage(uint64_t pageID, SharedStringHash linkHash)
+void VisitedLinkStore::addVisitedLinkHashFromPage(PageIdentifier pageID, SharedStringHash linkHash)
 {
     if (auto* webPageProxy = WebProcessProxy::webPage(pageID)) {
         if (!webPageProxy->addsVisitedLinks())

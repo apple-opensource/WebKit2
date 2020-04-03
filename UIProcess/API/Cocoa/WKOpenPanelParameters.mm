@@ -26,7 +26,9 @@
 #import "config.h"
 #import "WKOpenPanelParametersInternal.h"
 
-#if WK_API_ENABLED && PLATFORM(MAC)
+#if PLATFORM(MAC)
+
+#import "WKNSArray.h"
 
 @implementation WKOpenPanelParameters
 
@@ -45,6 +47,20 @@
 - (API::Object&)_apiObject
 {
     return *_openPanelParameters;
+}
+
+@end
+
+@implementation WKOpenPanelParameters (WKPrivate)
+
+- (NSArray<NSString *> *)_acceptedMIMETypes
+{
+    return wrapper(_openPanelParameters->acceptMIMETypes());
+}
+
+- (NSArray<NSString *> *)_acceptedFileExtensions
+{
+    return wrapper(_openPanelParameters->acceptFileExtensions());
 }
 
 @end

@@ -25,23 +25,33 @@
 
 #pragma once
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 
 #include "ArgumentCoders.h"
 #include "InteractionInformationRequest.h"
 #include "ShareableBitmap.h"
 #include <WebCore/IntPoint.h>
+#include <WebCore/ScrollTypes.h>
 #include <WebCore/SelectionRect.h>
 #include <WebCore/TextIndicator.h>
-#include <WebCore/URL.h>
+#include <wtf/URL.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebKit {
 
 struct InteractionInformationAtPosition {
+    static InteractionInformationAtPosition invalidInformation()
+    {
+        InteractionInformationAtPosition response;
+        response.canBeValid = false;
+        return response;
+    }
+
     InteractionInformationRequest request;
 
-    bool nodeAtPositionIsAssistedNode { false };
+    bool canBeValid { true };
+    bool nodeAtPositionIsFocusedElement { false };
+    bool nodeAtPositionHasDoubleClickHandler { false };
 #if ENABLE(DATA_INTERACTION)
     bool hasSelectionAtPosition { false };
 #endif
@@ -53,15 +63,22 @@ struct InteractionInformationAtPosition {
     bool isAttachment { false };
     bool isAnimatedImage { false };
     bool isElement { false };
+    WebCore::ScrollingNodeID containerScrollingNodeID { 0 };
 #if ENABLE(DATA_DETECTION)
     bool isDataDetectorLink { false };
 #endif
+#if ENABLE(DATALIST_ELEMENT)
+    bool preventTextInteraction { false };
+#endif
     WebCore::FloatPoint adjustedPointForNodeRespondingToClickEvents;
-    WebCore::URL url;
-    WebCore::URL imageURL;
+    URL url;
+    URL imageURL;
     String title;
     String idAttribute;
     WebCore::IntRect bounds;
+#if PLATFORM(MACCATALYST)
+    WebCore::IntRect caretRect;
+#endif
     RefPtr<ShareableBitmap> image;
     String textBefore;
     String textAfter;
@@ -83,4 +100,4 @@ struct InteractionInformationAtPosition {
 
 }
 
-#endif // PLATFORM(IOS)
+#endif // PLATFORM(IOS_FAMILY)

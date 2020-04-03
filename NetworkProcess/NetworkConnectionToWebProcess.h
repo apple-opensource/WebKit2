@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,47 +25,69 @@
 
 #pragma once
 
-#include "BlockingResponseMap.h"
 #include "CacheStorageEngineConnection.h"
 #include "Connection.h"
 #include "DownloadID.h"
+#include "NetworkActivityTracker.h"
 #include "NetworkConnectionToWebProcessMessages.h"
+#include "NetworkMDNSRegister.h"
 #include "NetworkRTCProvider.h"
-
-#include <WebCore/ResourceLoadPriority.h>
+#include "NetworkResourceLoadMap.h"
+#include "WebPaymentCoordinatorProxy.h"
+#include <WebCore/NetworkLoadInformation.h>
+#include <WebCore/PageIdentifier.h>
+#include <WebCore/ProcessIdentifier.h>
+#include <WebCore/RegistrableDomain.h>
 #include <wtf/RefCounted.h>
+
+namespace PAL {
+class SessionID;
+}
 
 namespace WebCore {
 class BlobDataFileReference;
-class HTTPHeaderMap;
+class BlobRegistryImpl;
 class ResourceError;
 class ResourceRequest;
+enum class StorageAccessPromptWasShown : bool;
+enum class StorageAccessWasGranted : bool;
+struct SameSiteInfo;
 
-enum class IncludeSecureCookies;
+enum class IncludeSecureCookies : bool;
 }
 
 namespace WebKit {
 
-class NetworkConnectionToWebProcess;
-class NetworkLoadParameters;
+class NetworkProcess;
 class NetworkResourceLoader;
+class NetworkSocketChannel;
 class NetworkSocketStream;
-class SyncNetworkResourceLoader;
+class WebIDBConnectionToClient;
+class WebSWServerConnection;
 typedef uint64_t ResourceLoadIdentifier;
 
 namespace NetworkCache {
 struct DataKey;
 }
 
-class NetworkConnectionToWebProcess : public RefCounted<NetworkConnectionToWebProcess>, IPC::Connection::Client {
+class NetworkConnectionToWebProcess
+    : public RefCounted<NetworkConnectionToWebProcess>
+#if ENABLE(APPLE_PAY_REMOTE_UI)
+    , public WebPaymentCoordinatorProxy::Client
+#endif
+    , IPC::Connection::Client {
 public:
-    static Ref<NetworkConnectionToWebProcess> create(IPC::Connection::Identifier);
+    using RegistrableDomain = WebCore::RegistrableDomain;
+
+    static Ref<NetworkConnectionToWebProcess> create(NetworkProcess&, IPC::Connection::Identifier);
     virtual ~NetworkConnectionToWebProcess();
 
     IPC::Connection& connection() { return m_connection.get(); }
+    NetworkProcess& networkProcess() { return m_networkProcess.get(); }
 
     void didCleanupResourceLoader(NetworkResourceLoader&);
-    void didFinishPingLoad(uint64_t pingLoadIdentifier, const WebCore::ResourceError&, const WebCore::ResourceResponse&);
+    void transferKeptAliveLoad(NetworkResourceLoader&);
+    void setOnLineState(bool);
 
     bool captureExtraNetworkLoadMetricsEnabled() const { return m_captureExtraNetworkLoadMetricsEnabled; }
 
@@ -74,8 +96,60 @@ public:
     void cleanupForSuspension(Function<void()>&&);
     void endSuspension();
 
+    void getNetworkLoadInformationRequest(ResourceLoadIdentifier identifier, CompletionHandler<void(const WebCore::ResourceRequest&)>&& completionHandler)
+    {
+        completionHandler(m_networkLoadInformationByID.get(identifier).request);
+    }
+
+    void getNetworkLoadInformationResponse(ResourceLoadIdentifier identifier, CompletionHandler<void(const WebCore::ResourceResponse&)>&& completionHandler)
+    {
+        completionHandler(m_networkLoadInformationByID.get(identifier).response);
+    }
+
+    void getNetworkLoadIntermediateInformation(ResourceLoadIdentifier identifier, CompletionHandler<void(const Vector<WebCore::NetworkTransactionInformation>&)>&& completionHandler)
+    {
+        completionHandler(m_networkLoadInformationByID.get(identifier).transactions);
+    }
+
+    void takeNetworkLoadInformationMetrics(ResourceLoadIdentifier identifier, CompletionHandler<void(const WebCore::NetworkLoadMetrics&)>&& completionHandler)
+    {
+        completionHandler(m_networkLoadInformationByID.take(identifier).metrics);
+    }
+
+    void addNetworkLoadInformation(ResourceLoadIdentifier identifier, WebCore::NetworkLoadInformation&& information)
+    {
+        ASSERT(!m_networkLoadInformationByID.contains(identifier));
+        m_networkLoadInformationByID.add(identifier, WTFMove(information));
+    }
+
+    void addNetworkLoadInformationMetrics(ResourceLoadIdentifier identifier, const WebCore::NetworkLoadMetrics& metrics)
+    {
+        ASSERT(m_networkLoadInformationByID.contains(identifier));
+        m_networkLoadInformationByID.ensure(identifier, [] {
+            return WebCore::NetworkLoadInformation { };
+        }).iterator->value.metrics = metrics;
+    }
+
+    void removeNetworkLoadInformation(ResourceLoadIdentifier identifier)
+    {
+        m_networkLoadInformationByID.remove(identifier);
+    }
+
+    Optional<NetworkActivityTracker> startTrackingResourceLoad(WebCore::PageIdentifier, ResourceLoadIdentifier resourceID, bool isMainResource, const PAL::SessionID&);
+    void stopTrackingResourceLoad(ResourceLoadIdentifier resourceID, NetworkActivityTracker::CompletionCode);
+
+    WebCore::BlobRegistryImpl& blobRegistry();
+    Vector<RefPtr<WebCore::BlobDataFileReference>> filesInBlob(const URL&);
+    Vector<RefPtr<WebCore::BlobDataFileReference>> resolveBlobReferences(const NetworkResourceLoadParameters&);
+
+    void webPageWasAdded(PAL::SessionID, WebCore::PageIdentifier, WebCore::PageIdentifier oldPageID);
+    void webPageWasRemoved(PAL::SessionID, WebCore::PageIdentifier);
+    void webProcessSessionChanged(PAL::SessionID newSessionID, const Vector<WebCore::PageIdentifier>& pages);
+
+    void removeSocketChannel(uint64_t identifier);
+
 private:
-    NetworkConnectionToWebProcess(IPC::Connection::Identifier);
+    NetworkConnectionToWebProcess(NetworkProcess&, IPC::Connection::Identifier);
 
     void didFinishPreconnection(uint64_t preconnectionIdentifier, const WebCore::ResourceError&);
 
@@ -89,66 +163,158 @@ private:
     void didReceiveNetworkConnectionToWebProcessMessage(IPC::Connection&, IPC::Decoder&);
     void didReceiveSyncNetworkConnectionToWebProcessMessage(IPC::Connection&, IPC::Decoder&, std::unique_ptr<IPC::Encoder>&);
 
-    void scheduleResourceLoad(const NetworkResourceLoadParameters&);
-    void performSynchronousLoad(const NetworkResourceLoadParameters&, Ref<Messages::NetworkConnectionToWebProcess::PerformSynchronousLoad::DelayedReply>&&);
-    void loadPing(NetworkResourceLoadParameters&&, WebCore::HTTPHeaderMap&& originalRequestHeaders);
+    void scheduleResourceLoad(NetworkResourceLoadParameters&&);
+    void performSynchronousLoad(NetworkResourceLoadParameters&&, Messages::NetworkConnectionToWebProcess::PerformSynchronousLoad::DelayedReply&&);
+    void testProcessIncomingSyncMessagesWhenWaitingForSyncReply(WebCore::PageIdentifier, Messages::NetworkConnectionToWebProcess::TestProcessIncomingSyncMessagesWhenWaitingForSyncReply::DelayedReply&&);
+    void loadPing(NetworkResourceLoadParameters&&);
     void prefetchDNS(const String&);
     void preconnectTo(uint64_t preconnectionIdentifier, NetworkResourceLoadParameters&&);
 
     void removeLoadIdentifier(ResourceLoadIdentifier);
-    void setDefersLoading(ResourceLoadIdentifier, bool);
-    void crossOriginRedirectReceived(ResourceLoadIdentifier, const WebCore::URL& redirectURL);
+    void pageLoadCompleted(WebCore::PageIdentifier);
+    void crossOriginRedirectReceived(ResourceLoadIdentifier, const URL& redirectURL);
     void startDownload(PAL::SessionID, DownloadID, const WebCore::ResourceRequest&, const String& suggestedName = { });
     void convertMainResourceLoadToDownload(PAL::SessionID, uint64_t mainResourceLoadIdentifier, DownloadID, const WebCore::ResourceRequest&, const WebCore::ResourceResponse&);
 
-    void cookiesForDOM(PAL::SessionID, const WebCore::URL& firstParty, const WebCore::URL&, std::optional<uint64_t> frameID, std::optional<uint64_t> pageID, WebCore::IncludeSecureCookies, String& cookieString, bool& secureCookiesAccessed);
-    void setCookiesFromDOM(PAL::SessionID, const WebCore::URL& firstParty, const WebCore::URL&, std::optional<uint64_t> frameID, std::optional<uint64_t> pageID, const String&);
-    void cookiesEnabled(PAL::SessionID, bool& result);
-    void cookieRequestHeaderFieldValue(PAL::SessionID, const WebCore::URL& firstParty, const WebCore::URL&, std::optional<uint64_t> frameID, std::optional<uint64_t> pageID, WebCore::IncludeSecureCookies, String& cookieString, bool& secureCookiesAccessed);
-    void getRawCookies(PAL::SessionID, const WebCore::URL& firstParty, const WebCore::URL&, std::optional<uint64_t> frameID, std::optional<uint64_t> pageID, Vector<WebCore::Cookie>&);
-    void deleteCookie(PAL::SessionID, const WebCore::URL&, const String& cookieName);
+    void cookiesForDOM(PAL::SessionID, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, Optional<uint64_t> frameID, Optional<WebCore::PageIdentifier>, WebCore::IncludeSecureCookies, CompletionHandler<void(String cookieString, bool secureCookiesAccessed)>&&);
+    void setCookiesFromDOM(PAL::SessionID, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, Optional<uint64_t> frameID, Optional<WebCore::PageIdentifier>, const String&);
+    void cookiesEnabled(PAL::SessionID, CompletionHandler<void(bool)>&&);
+    void cookieRequestHeaderFieldValue(PAL::SessionID, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, Optional<uint64_t> frameID, Optional<WebCore::PageIdentifier>, WebCore::IncludeSecureCookies, CompletionHandler<void(String cookieString, bool secureCookiesAccessed)>&&);
+    void getRawCookies(PAL::SessionID, const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, Optional<uint64_t> frameID, Optional<WebCore::PageIdentifier>, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&);
+    void deleteCookie(PAL::SessionID, const URL&, const String& cookieName);
 
-    void registerFileBlobURL(const WebCore::URL&, const String& path, SandboxExtension::Handle&&, const String& contentType);
-    void registerBlobURL(const WebCore::URL&, Vector<WebCore::BlobPart>&&, const String& contentType);
-    void registerBlobURLFromURL(const WebCore::URL&, const WebCore::URL& srcURL, bool shouldBypassConnectionCheck);
-    void preregisterSandboxExtensionsForOptionallyFileBackedBlob(const Vector<String>& fileBackedPath, SandboxExtension::HandleArray&&);
-    void registerBlobURLOptionallyFileBacked(const WebCore::URL&, const WebCore::URL& srcURL, const String& fileBackedPath, const String& contentType);
-    void registerBlobURLForSlice(const WebCore::URL&, const WebCore::URL& srcURL, int64_t start, int64_t end);
-    void blobSize(const WebCore::URL&, uint64_t& resultSize);
-    void unregisterBlobURL(const WebCore::URL&);
-    void writeBlobsToTemporaryFiles(const Vector<String>& blobURLs, uint64_t requestIdentifier);
-
-    void storeDerivedDataToCache(const WebKit::NetworkCache::DataKey&, const IPC::DataReference&);
+    void registerFileBlobURL(const URL&, const String& path, SandboxExtension::Handle&&, const String& contentType);
+    void registerBlobURL(const URL&, Vector<WebCore::BlobPart>&&, const String& contentType);
+    void registerBlobURLFromURL(const URL&, const URL& srcURL, bool shouldBypassConnectionCheck);
+    void registerBlobURLOptionallyFileBacked(const URL&, const URL& srcURL, const String& fileBackedPath, const String& contentType);
+    void registerBlobURLForSlice(const URL&, const URL& srcURL, int64_t start, int64_t end);
+    void blobSize(const URL&, CompletionHandler<void(uint64_t)>&&);
+    void unregisterBlobURL(const URL&);
+    void writeBlobsToTemporaryFiles(const Vector<String>& blobURLs, CompletionHandler<void(Vector<String>&&)>&&);
 
     void setCaptureExtraNetworkLoadMetricsEnabled(bool);
 
-    void createSocketStream(WebCore::URL&&, PAL::SessionID, String cachePartition, uint64_t);
-    void destroySocketStream(uint64_t);
-    
+    void createSocketStream(URL&&, PAL::SessionID, String cachePartition, uint64_t);
+
+    void createSocketChannel(PAL::SessionID, const WebCore::ResourceRequest&, const String& protocol, uint64_t identifier);
+
     void ensureLegacyPrivateBrowsingSession();
+
+#if ENABLE(INDEXED_DATABASE)
+    // Messages handlers (Modern IDB).
+    void establishIDBConnectionToServer(PAL::SessionID, CompletionHandler<void(uint64_t  serverConnectionIdentifier)>&&);
+#endif
+
+#if ENABLE(SERVICE_WORKER)
+    void establishSWServerConnection(PAL::SessionID, CompletionHandler<void(WebCore::SWServerConnectionIdentifier&&)>&&);
+    void unregisterSWConnections();
+#endif
 
 #if USE(LIBWEBRTC)
     NetworkRTCProvider& rtcProvider();
 #endif
+#if ENABLE(WEB_RTC)
+    NetworkMDNSRegister& mdnsRegister() { return m_mdnsRegister; }
+#endif
 
     CacheStorageEngineConnection& cacheStorageConnection();
 
-    void removeStorageAccessForFrame(PAL::SessionID, uint64_t frameID, uint64_t pageID);
-    void removeStorageAccessForAllFramesOnPage(PAL::SessionID, uint64_t pageID);
+#if ENABLE(RESOURCE_LOAD_STATISTICS)
+    void removeStorageAccessForFrame(PAL::SessionID, uint64_t frameID, WebCore::PageIdentifier);
+    void clearPageSpecificDataForResourceLoadStatistics(PAL::SessionID, WebCore::PageIdentifier);
+
+    void logUserInteraction(PAL::SessionID, const RegistrableDomain&);
+    void logWebSocketLoading(PAL::SessionID, const RegistrableDomain& targetDomain, const RegistrableDomain& topFrameDomain, WallTime lastSeen);
+    void logSubresourceLoading(PAL::SessionID, const RegistrableDomain& targetDomain, const RegistrableDomain& topFrameDomain, WallTime lastSeen);
+    void logSubresourceRedirect(PAL::SessionID, const RegistrableDomain& sourceDomain, const RegistrableDomain& targetDomain);
+    void resourceLoadStatisticsUpdated(Vector<WebCore::ResourceLoadStatistics>&&);
+    void hasStorageAccess(PAL::SessionID, const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, uint64_t frameID, WebCore::PageIdentifier, CompletionHandler<void(bool)>&&);
+    void requestStorageAccess(PAL::SessionID, const RegistrableDomain& subFrameDomain, const RegistrableDomain& topFrameDomain, uint64_t frameID, WebCore::PageIdentifier, CompletionHandler<void(WebCore::StorageAccessWasGranted, WebCore::StorageAccessPromptWasShown)>&&);
+    void requestStorageAccessUnderOpener(PAL::SessionID, WebCore::RegistrableDomain&& domainInNeedOfStorageAccess, WebCore::PageIdentifier openerPageID, WebCore::RegistrableDomain&& openerDomain);
+#endif
+
+    void addOriginAccessWhitelistEntry(const String& sourceOrigin, const String& destinationProtocol, const String& destinationHost, bool allowDestinationSubdomains);
+    void removeOriginAccessWhitelistEntry(const String& sourceOrigin, const String& destinationProtocol, const String& destinationHost, bool allowDestinationSubdomains);
+    void resetOriginAccessWhitelists();
+
+    struct ResourceNetworkActivityTracker {
+        ResourceNetworkActivityTracker() = default;
+        ResourceNetworkActivityTracker(const ResourceNetworkActivityTracker&) = default;
+        ResourceNetworkActivityTracker(ResourceNetworkActivityTracker&&) = default;
+        ResourceNetworkActivityTracker(WebCore::PageIdentifier pageID)
+            : pageID { pageID }
+            , isRootActivity { true }
+            , networkActivity { NetworkActivityTracker::Label::LoadPage }
+        {
+        }
+
+        ResourceNetworkActivityTracker(WebCore::PageIdentifier pageID, ResourceLoadIdentifier resourceID)
+            : pageID { pageID }
+            , resourceID { resourceID }
+            , networkActivity { NetworkActivityTracker::Label::LoadResource }
+        {
+        }
+
+        WebCore::PageIdentifier pageID;
+        ResourceLoadIdentifier resourceID { 0 };
+        bool isRootActivity { false };
+        NetworkActivityTracker networkActivity;
+    };
+
+    void stopAllNetworkActivityTracking();
+    void stopAllNetworkActivityTrackingForPage(WebCore::PageIdentifier);
+    size_t findRootNetworkActivity(WebCore::PageIdentifier);
+    size_t findNetworkActivityTracker(ResourceLoadIdentifier resourceID);
+
+#if ENABLE(APPLE_PAY_REMOTE_UI)
+    WebPaymentCoordinatorProxy& paymentCoordinator();
+
+    // WebPaymentCoordinatorProxy::Client
+    IPC::Connection* paymentCoordinatorConnection(const WebPaymentCoordinatorProxy&) final;
+    UIViewController *paymentCoordinatorPresentingViewController(const WebPaymentCoordinatorProxy&) final;
+    const String& paymentCoordinatorBoundInterfaceIdentifier(const WebPaymentCoordinatorProxy&, PAL::SessionID) final;
+    const String& paymentCoordinatorCTDataConnectionServiceType(const WebPaymentCoordinatorProxy&, PAL::SessionID) final;
+    const String& paymentCoordinatorSourceApplicationBundleIdentifier(const WebPaymentCoordinatorProxy&, PAL::SessionID) final;
+    const String& paymentCoordinatorSourceApplicationSecondaryIdentifier(const WebPaymentCoordinatorProxy&, PAL::SessionID) final;
+    std::unique_ptr<PaymentAuthorizationPresenter> paymentCoordinatorAuthorizationPresenter(WebPaymentCoordinatorProxy&, PKPaymentRequest *) final;
+    void paymentCoordinatorAddMessageReceiver(WebPaymentCoordinatorProxy&, const IPC::StringReference&, IPC::MessageReceiver&) final;
+    void paymentCoordinatorRemoveMessageReceiver(WebPaymentCoordinatorProxy&, const IPC::StringReference&) final;
+#endif
 
     Ref<IPC::Connection> m_connection;
+    Ref<NetworkProcess> m_networkProcess;
 
     HashMap<uint64_t, RefPtr<NetworkSocketStream>> m_networkSocketStreams;
-    HashMap<ResourceLoadIdentifier, RefPtr<NetworkResourceLoader>> m_networkResourceLoaders;
+    HashMap<uint64_t, std::unique_ptr<NetworkSocketChannel>> m_networkSocketChannels;
+    NetworkResourceLoadMap m_networkResourceLoaders;
     HashMap<String, RefPtr<WebCore::BlobDataFileReference>> m_blobDataFileReferences;
+    Vector<ResourceNetworkActivityTracker> m_networkActivityTrackers;
+
+    HashMap<ResourceLoadIdentifier, WebCore::NetworkLoadInformation> m_networkLoadInformationByID;
+
 
 #if USE(LIBWEBRTC)
     RefPtr<NetworkRTCProvider> m_rtcProvider;
+#endif
+#if ENABLE(WEB_RTC)
+    NetworkMDNSRegister m_mdnsRegister;
 #endif
 
     bool m_captureExtraNetworkLoadMetricsEnabled { false };
 
     RefPtr<CacheStorageEngineConnection> m_cacheStorageConnection;
+
+#if ENABLE(INDEXED_DATABASE)
+    HashMap<uint64_t, RefPtr<WebIDBConnectionToClient>> m_webIDBConnections;
+#endif
+
+#if ENABLE(SERVICE_WORKER)
+    HashMap<WebCore::SWServerConnectionIdentifier, WeakPtr<WebSWServerConnection>> m_swConnections;
+#endif
+
+#if ENABLE(APPLE_PAY_REMOTE_UI)
+    std::unique_ptr<WebPaymentCoordinatorProxy> m_paymentCoordinator;
+#endif
 };
 
 } // namespace WebKit

@@ -26,15 +26,13 @@
 #import "config.h"
 #import "WKNSURLRequest.h"
 
-#if WK_API_ENABLED
-
 #import "WKNSURLExtras.h"
 
 @implementation WKNSURLRequest
 
 - (NSObject *)_web_createTarget
 {
-    return [static_cast<API::URLRequest*>(&self._apiObject)->resourceRequest().nsURLRequest(WebCore::DoNotUpdateHTTPBody) copy];
+    return [static_cast<API::URLRequest*>(&self._apiObject)->resourceRequest().nsURLRequest(WebCore::HTTPBodyUpdatePolicy::DoNotUpdateHTTPBody) copy];
 }
 
 - (NSURL *)URL
@@ -50,5 +48,3 @@
 }
 
 @end
-
-#endif // WK_API_ENABLED

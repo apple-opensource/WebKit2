@@ -29,12 +29,12 @@
 #include <WebCore/IntRect.h>
 #include <gdk/gdkkeysyms.h>
 #include <gtk/gtk.h>
+#include <wtf/HexNumber.h>
 #include <wtf/Vector.h>
 #include <wtf/glib/GUniquePtr.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 void InputMethodFilter::handleCommitCallback(InputMethodFilter* filter, const char* compositionString)
 {
@@ -82,15 +82,31 @@ InputMethodFilter::~InputMethodFilter()
     g_signal_handlers_disconnect_matched(m_context.get(), G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, this);
 }
 
+bool InputMethodFilter::isViewFocused() const
+{
+#if ENABLE(API_TESTS)
+    ASSERT(m_page || m_testingMode);
+    if (m_testingMode)
+        return true;
+#else
+    ASSERT(m_page);
+#endif
+    return m_page->isViewFocused();
+}
+
 void InputMethodFilter::setEnabled(bool enabled)
 {
+#if ENABLE(API_TESTS)
+    ASSERT(m_page || m_testingMode);
+#else
     ASSERT(m_page);
+#endif
 
     // Notify focus out before changing the m_enabled.
     if (!enabled)
         notifyFocusedOut();
     m_enabled = enabled;
-    if (enabled)
+    if (enabled && isViewFocused())
         notifyFocusedIn();
 }
 
@@ -182,7 +198,11 @@ void InputMethodFilter::filterKeyEvent(GdkEventKey* event, FilterKeyEventComplet
 
     bool justSentFakeKeyUp = m_justSentFakeKeyUp;
     m_justSentFakeKeyUp = false;
-    if (justSentFakeKeyUp && event->type == GDK_KEY_RELEASE)
+    guint keyval;
+    gdk_event_get_keyval(reinterpret_cast<GdkEvent*>(event), &keyval);
+    GdkEventType type = gdk_event_get_event_type(reinterpret_cast<GdkEvent*>(event));
+
+    if (justSentFakeKeyUp && type == GDK_KEY_RELEASE)
         return;
 
     // Simple input methods work such that even normal keystrokes fire the
@@ -194,10 +214,10 @@ void InputMethodFilter::filterKeyEvent(GdkEventKey* event, FilterKeyEventComplet
         return;
     }
 
-    if (filtered && event->type == GDK_KEY_PRESS) {
+    if (filtered && type == GDK_KEY_PRESS) {
         if (!m_preeditChanged && m_confirmedComposition.isNull()) {
             m_composingTextCurrently = true;
-            m_lastFilteredKeyPressCodeWithNoResults = event->keyval;
+            m_lastFilteredKeyPressCodeWithNoResults = keyval;
             return;
         }
 
@@ -211,7 +231,7 @@ void InputMethodFilter::filterKeyEvent(GdkEventKey* event, FilterKeyEventComplet
 
     // If we previously filtered a key press event and it yielded no results. Suppress
     // the corresponding key release event to avoid confusing the web content.
-    if (event->type == GDK_KEY_RELEASE && lastFilteredKeyPressCodeWithNoResults == event->keyval)
+    if (type == GDK_KEY_RELEASE && lastFilteredKeyPressCodeWithNoResults == keyval)
         return;
 
     // At this point a keystroke was either:
@@ -427,19 +447,23 @@ void InputMethodFilter::handlePreeditEnd()
 #if ENABLE(API_TESTS)
 void InputMethodFilter::logHandleKeyboardEventForTesting(GdkEventKey* event, const String& eventString, EventFakedForComposition faked)
 {
-    const char* eventType = event->type == GDK_KEY_RELEASE ? "release" : "press";
+    guint keyval;
+    gdk_event_get_keyval(reinterpret_cast<GdkEvent*>(event), &keyval);
+    const char* eventType = gdk_event_get_event_type(reinterpret_cast<GdkEvent*>(event)) == GDK_KEY_RELEASE ? "release" : "press";
     const char* fakedString = faked == EventFaked ? " (faked)" : "";
     if (!eventString.isNull())
-        m_events.append(String::format("sendSimpleKeyEvent type=%s keycode=%x text='%s'%s", eventType, event->keyval, eventString.utf8().data(), fakedString));
+        m_events.append(makeString("sendSimpleKeyEvent type=", eventType, " keycode=", hex(keyval), " text='", eventString, '\'', fakedString));
     else
-        m_events.append(String::format("sendSimpleKeyEvent type=%s keycode=%x%s", eventType, event->keyval, fakedString));
+        m_events.append(makeString("sendSimpleKeyEvent type=", eventType, " keycode=", hex(keyval), fakedString));
 }
 
 void InputMethodFilter::logHandleKeyboardEventWithCompositionResultsForTesting(GdkEventKey* event, ResultsToSend resultsToSend, EventFakedForComposition faked)
 {
-    const char* eventType = event->type == GDK_KEY_RELEASE ? "release" : "press";
+    guint keyval;
+    gdk_event_get_keyval(reinterpret_cast<GdkEvent*>(event), &keyval);
+    const char* eventType = gdk_event_get_event_type(reinterpret_cast<GdkEvent*>(event)) == GDK_KEY_RELEASE ? "release" : "press";
     const char* fakedString = faked == EventFaked ? " (faked)" : "";
-    m_events.append(String::format("sendKeyEventWithCompositionResults type=%s keycode=%x%s", eventType, event->keyval, fakedString));
+    m_events.append(makeString("sendKeyEventWithCompositionResults type=", eventType, " keycode=", hex(keyval), fakedString));
 
     if (resultsToSend & Composition && !m_confirmedComposition.isNull())
         logConfirmCompositionForTesting();
@@ -452,13 +476,14 @@ void InputMethodFilter::logConfirmCompositionForTesting()
     if (m_confirmedComposition.isEmpty())
         m_events.append(String("confirmCurrentcomposition"));
     else
-        m_events.append(String::format("confirmComposition '%s'", m_confirmedComposition.utf8().data()));
+        m_events.append(makeString("confirmComposition '", m_confirmedComposition, '\''));
 }
 
 void InputMethodFilter::logSetPreeditForTesting()
 {
-    m_events.append(String::format("setPreedit text='%s' cursorOffset=%i", m_preedit.utf8().data(), m_cursorOffset));
+    m_events.append(makeString("setPreedit text='", m_preedit, "' cursorOffset=", m_cursorOffset));
 }
+
 #endif // ENABLE(API_TESTS)
 
 } // namespace WebKit

@@ -25,9 +25,9 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS_THREADED) && USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)
-
 #include <WebCore/DisplayRefreshMonitor.h>
+
+#if USE(COORDINATED_GRAPHICS) && USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)
 #include <wtf/RunLoop.h>
 
 namespace WebKit {
@@ -36,9 +36,15 @@ class ThreadedCompositor;
 
 class ThreadedDisplayRefreshMonitor : public WebCore::DisplayRefreshMonitor {
 public:
-    static Ref<ThreadedDisplayRefreshMonitor> create(ThreadedCompositor& compositor)
+    class Client {
+    public:
+        virtual void requestDisplayRefreshMonitorUpdate() = 0;
+        virtual void handleDisplayRefreshMonitorUpdate(bool) = 0;
+    };
+
+    static Ref<ThreadedDisplayRefreshMonitor> create(WebCore::PlatformDisplayID displayID, Client& client)
     {
-        return adoptRef(*new ThreadedDisplayRefreshMonitor(compositor));
+        return adoptRef(*new ThreadedDisplayRefreshMonitor(displayID, client));
     }
     virtual ~ThreadedDisplayRefreshMonitor() = default;
 
@@ -49,13 +55,13 @@ public:
     void invalidate();
 
 private:
-    ThreadedDisplayRefreshMonitor(ThreadedCompositor&);
+    ThreadedDisplayRefreshMonitor(WebCore::PlatformDisplayID, Client&);
 
     void displayRefreshCallback();
     RunLoop::Timer<ThreadedDisplayRefreshMonitor> m_displayRefreshTimer;
-    ThreadedCompositor* m_compositor;
+    Client* m_client;
 };
 
 } // namespace WebKit
 
-#endif // USE(COORDINATED_GRAPHICS_THREADED) && USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)
+#endif // USE(COORDINATED_GRAPHICS) && USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR)

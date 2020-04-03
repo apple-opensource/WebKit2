@@ -39,22 +39,17 @@
 
 #if PLATFORM(GTK)
 #include <gtk/gtk.h>
-#ifndef GTK_API_VERSION_2
 #include <gtk/gtkx.h>
-#endif
-#include <gdk/gdkx.h>
-#include <WebCore/GtkVersioning.h>
 #endif
 
 #if USE(CAIRO)
-#include "PlatformContextCairo.h"
-#include "RefPtrCairo.h"
+#include <WebCore/PlatformContextCairo.h>
+#include <WebCore/RefPtrCairo.h>
 #include <cairo/cairo-xlib.h>
 #endif
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 static inline Display* x11HostDisplay()
 {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,7 @@
 #import "config.h"
 #import "WKPasswordView.h"
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 
 #import "UIKitSPI.h"
 #import "WKContentView.h"
@@ -69,6 +69,12 @@ const CGFloat passwordEntryFieldPadding = 10;
     return self;
 }
 
+- (void)dealloc
+{
+    [_userDidEnterPassword release];
+    [super dealloc];
+}
+
 - (NSString *)documentName
 {
     return _documentName.get();
@@ -94,7 +100,14 @@ const CGFloat passwordEntryFieldPadding = 10;
     [_scrollView setMaximumZoomScale:1];
     [_scrollView setZoomScale:1];
     [_scrollView setContentSize:self.frame.size];
-    [_scrollView setBackgroundColor:[UIColor groupTableViewBackgroundColor]];
+
+#if HAVE(OS_DARK_MODE_SUPPORT)
+    [_scrollView setBackgroundColor:UIColor.systemGroupedBackgroundColor];
+#else
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    [_scrollView setBackgroundColor:UIColor.groupTableViewBackgroundColor];
+    ALLOW_DEPRECATED_DECLARATIONS_END
+#endif
 
     [scrollView addSubview:self];
 }
@@ -181,4 +194,4 @@ const CGFloat passwordEntryFieldPadding = 10;
 
 @end
 
-#endif // PLATFORM(IOS)
+#endif // PLATFORM(IOS_FAMILY)

@@ -25,10 +25,18 @@
 
 #pragma once
 
+#include "WebProcessProxy.h"
 #include <WebCore/ResourceRequest.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/SharedBuffer.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/InstanceCounted.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+
+namespace IPC {
+class DataReference;
+}
 
 namespace WebCore {
 class ResourceError;
@@ -41,15 +49,23 @@ namespace WebKit {
 class WebURLSchemeHandler;
 class WebPageProxy;
 
-class WebURLSchemeTask : public RefCounted<WebURLSchemeTask>, public InstanceCounted<WebURLSchemeTask> {
+using SyncLoadCompletionHandler = CompletionHandler<void(const WebCore::ResourceResponse&, const WebCore::ResourceError&, const Vector<char>&)>;
+
+class WebURLSchemeTask : public ThreadSafeRefCounted<WebURLSchemeTask>, public InstanceCounted<WebURLSchemeTask> {
     WTF_MAKE_NONCOPYABLE(WebURLSchemeTask);
 public:
-    static Ref<WebURLSchemeTask> create(WebURLSchemeHandler&, WebPageProxy&, uint64_t identifier, WebCore::ResourceRequest&&);
+    static Ref<WebURLSchemeTask> create(WebURLSchemeHandler&, WebPageProxy&, WebProcessProxy&, uint64_t identifier, WebCore::ResourceRequest&&, SyncLoadCompletionHandler&&);
 
-    uint64_t identifier() const { return m_identifier; }
-    uint64_t pageID() const { return m_pageIdentifier; }
+    ~WebURLSchemeTask();
 
-    const WebCore::ResourceRequest& request() const { return m_request; }
+    uint64_t identifier() const { ASSERT(RunLoop::isMain()); return m_identifier; }
+    WebCore::PageIdentifier pageID() const { ASSERT(RunLoop::isMain()); return m_pageIdentifier; }
+
+    WebProcessProxy* process() { ASSERT(RunLoop::isMain()); return m_process.get(); }
+
+#if PLATFORM(COCOA)
+    NSURLRequest *nsRequest() const;
+#endif
 
     enum class ExceptionType {
         DataAlreadySent,
@@ -61,24 +77,32 @@ public:
     };
     ExceptionType didPerformRedirection(WebCore::ResourceResponse&&, WebCore::ResourceRequest&&);
     ExceptionType didReceiveResponse(const WebCore::ResourceResponse&);
-    ExceptionType didReceiveData(Ref<WebCore::SharedBuffer>);
+    ExceptionType didReceiveData(Ref<WebCore::SharedBuffer>&&);
     ExceptionType didComplete(const WebCore::ResourceError&);
 
     void stop();
     void pageDestroyed();
 
 private:
-    WebURLSchemeTask(WebURLSchemeHandler&, WebPageProxy&, uint64_t identifier, WebCore::ResourceRequest&&);
+    WebURLSchemeTask(WebURLSchemeHandler&, WebPageProxy&, WebProcessProxy&, uint64_t identifier, WebCore::ResourceRequest&&, SyncLoadCompletionHandler&&);
+
+    bool isSync() const { return !!m_syncCompletionHandler; }
 
     Ref<WebURLSchemeHandler> m_urlSchemeHandler;
     WebPageProxy* m_page;
+    RefPtr<WebProcessProxy> m_process;
     uint64_t m_identifier;
-    uint64_t m_pageIdentifier;
+    WebCore::PageIdentifier m_pageIdentifier;
     WebCore::ResourceRequest m_request;
+    mutable Lock m_requestLock;
     bool m_stopped { false };
     bool m_responseSent { false };
     bool m_dataSent { false };
     bool m_completed { false };
+    
+    SyncLoadCompletionHandler m_syncCompletionHandler;
+    WebCore::ResourceResponse m_syncResponse;
+    RefPtr<WebCore::SharedBuffer> m_syncData;
 };
 
 } // namespace WebKit

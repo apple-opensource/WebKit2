@@ -154,7 +154,7 @@ void PageLoadState::reset(const Transaction::Token& token)
     m_uncommittedState.state = State::Finished;
     m_uncommittedState.hasInsecureContent = false;
 
-    m_uncommittedState.pendingAPIRequestURL = String();
+    m_uncommittedState.pendingAPIRequest = { };
     m_uncommittedState.provisionalURL = String();
     m_uncommittedState.url = String();
 
@@ -172,13 +172,18 @@ bool PageLoadState::isLoading() const
     return isLoading(m_committedState);
 }
 
+bool PageLoadState::hasUncommittedLoad() const
+{
+    return isLoading(m_uncommittedState);
+}
+
 String PageLoadState::activeURL(const Data& data)
 {
     // If there is a currently pending URL, it is the active URL,
     // even when there's no main frame yet, as it might be the
     // first API request.
-    if (!data.pendingAPIRequestURL.isNull())
-        return data.pendingAPIRequestURL;
+    if (!data.pendingAPIRequest.url.isNull())
+        return data.pendingAPIRequest.url;
 
     if (!data.unreachableURL.isEmpty())
         return data.unreachableURL;
@@ -206,9 +211,9 @@ bool PageLoadState::hasOnlySecureContent(const Data& data)
         return false;
 
     if (data.state == State::Provisional)
-        return WebCore::protocolIs(data.provisionalURL, "https");
+        return WTF::protocolIs(data.provisionalURL, "https");
 
-    return WebCore::protocolIs(data.url, "https");
+    return WTF::protocolIs(data.url, "https");
 }
 
 bool PageLoadState::hasOnlySecureContent() const
@@ -218,7 +223,7 @@ bool PageLoadState::hasOnlySecureContent() const
 
 double PageLoadState::estimatedProgress(const Data& data)
 {
-    if (!data.pendingAPIRequestURL.isNull())
+    if (!data.pendingAPIRequest.url.isNull())
         return initialProgressValue;
 
     return data.estimatedProgress;
@@ -231,19 +236,38 @@ double PageLoadState::estimatedProgress() const
 
 const String& PageLoadState::pendingAPIRequestURL() const
 {
-    return m_committedState.pendingAPIRequestURL;
+    return m_committedState.pendingAPIRequest.url;
 }
 
-void PageLoadState::setPendingAPIRequestURL(const Transaction::Token& token, const String& pendingAPIRequestURL)
+auto PageLoadState::pendingAPIRequest() const -> const PendingAPIRequest&
 {
-    ASSERT_UNUSED(token, &token.m_pageLoadState == this);
-    m_uncommittedState.pendingAPIRequestURL = pendingAPIRequestURL;
+    return m_committedState.pendingAPIRequest;
 }
 
-void PageLoadState::clearPendingAPIRequestURL(const Transaction::Token& token)
+const URL& PageLoadState::resourceDirectoryURL() const
+{
+    return m_committedState.resourceDirectoryURL;
+}
+
+void PageLoadState::setPendingAPIRequest(const Transaction::Token& token, PendingAPIRequest&& pendingAPIRequest, const URL& resourceDirectoryURL)
 {
     ASSERT_UNUSED(token, &token.m_pageLoadState == this);
-    m_uncommittedState.pendingAPIRequestURL = String();
+    m_uncommittedState.pendingAPIRequest = WTFMove(pendingAPIRequest);
+    m_uncommittedState.resourceDirectoryURL = resourceDirectoryURL;
+}
+
+void PageLoadState::clearPendingAPIRequest(const Transaction::Token& token)
+{
+    ASSERT_UNUSED(token, &token.m_pageLoadState == this);
+    m_uncommittedState.pendingAPIRequest = { };
+}
+
+void PageLoadState::didExplicitOpen(const Transaction::Token& token, const String& url)
+{
+    ASSERT_UNUSED(token, &token.m_pageLoadState == this);
+
+    m_uncommittedState.url = url;
+    m_uncommittedState.provisionalURL = String();
 }
 
 void PageLoadState::didStartProvisionalLoad(const Transaction::Token& token, const String& url, const String& unreachableURL)
@@ -391,7 +415,7 @@ void PageLoadState::setNetworkRequestsInProgress(const Transaction::Token& token
 
 bool PageLoadState::isLoading(const Data& data)
 {
-    if (!data.pendingAPIRequestURL.isNull())
+    if (!data.pendingAPIRequest.url.isNull())
         return true;
 
     switch (data.state) {
@@ -407,6 +431,11 @@ bool PageLoadState::isLoading(const Data& data)
     return false;
 }
 
+void PageLoadState::didSwapWebProcesses()
+{
+    callObserverCallback(&Observer::didSwapWebProcesses);
+}
+
 void PageLoadState::willChangeProcessIsResponsive()
 {
     callObserverCallback(&Observer::willChangeWebProcessIsResponsive);
@@ -419,8 +448,17 @@ void PageLoadState::didChangeProcessIsResponsive()
 
 void PageLoadState::callObserverCallback(void (Observer::*callback)())
 {
-    for (auto* observer : m_observers)
+    auto protectedPage = makeRef(m_webPageProxy);
+
+    auto observerCopy = m_observers;
+    for (auto* observer : observerCopy) {
+        // This appears potentially inefficient on the surface (searching in a Vector)
+        // but in practice - using only API - there will only ever be (1) observer.
+        if (!m_observers.contains(observer))
+            continue;
+
         (observer->*callback)();
+    }
 }
 
 } // namespace WebKit

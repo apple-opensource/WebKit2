@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,8 +25,6 @@
 
 #import "WKURLSchemeTaskPrivate.h"
 
-#if WK_API_ENABLED
-
 #import "APIURLSchemeTask.h"
 #import "WKObject.h"
 
@@ -35,11 +33,9 @@
 
 namespace WebKit {
 
-inline id<WKURLSchemeTask> wrapper(API::URLSchemeTask& urlSchemeTask)
-{
-    ASSERT([urlSchemeTask.wrapper() isKindOfClass:[WKURLSchemeTaskImpl class]]);
-    return (id<WKURLSchemeTask>)urlSchemeTask.wrapper();
-}
+template<> struct WrapperTraits<API::URLSchemeTask> {
+    using WrapperClass = WKURLSchemeTaskImpl;
+};
 
 }
 
@@ -48,5 +44,3 @@ inline id<WKURLSchemeTask> wrapper(API::URLSchemeTask& urlSchemeTask)
     API::ObjectStorage<API::URLSchemeTask> _urlSchemeTask;
 }
 @end
-
-#endif // WK_API_ENABLED

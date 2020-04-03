@@ -28,6 +28,7 @@
 #include <WebCore/EditorInsertAction.h>
 #include <WebCore/TextAffinity.h>
 #include <wtf/Forward.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 class CSSStyleDeclaration;
@@ -46,6 +47,7 @@ namespace API {
 namespace InjectedBundle {
 
 class EditorClient {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     virtual ~EditorClient() { }
 

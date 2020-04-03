@@ -26,30 +26,31 @@
 #pragma once
 
 #include "APIFrameInfo.h"
+#include "APINavigation.h"
 #include "APIObject.h"
 #include "APIUserInitiatedAction.h"
 #include "NavigationActionData.h"
 #include <WebCore/ResourceRequest.h>
-#include <WebCore/URL.h>
+#include <wtf/URL.h>
 
 namespace API {
 
 class NavigationAction final : public ObjectImpl<Object::Type::NavigationAction> {
 public:
-    static Ref<NavigationAction> create(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, std::optional<WTF::String> targetFrameName, WebCore::ResourceRequest&& request, const WebCore::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction)
+    template<typename... Args> static Ref<NavigationAction> create(Args&&... args)
     {
-        return adoptRef(*new NavigationAction(WTFMove(navigationActionData), sourceFrame, targetFrame, targetFrameName, WTFMove(request), originalURL, shouldOpenAppLinks, WTFMove(userInitiatedAction)));
+        return adoptRef(*new NavigationAction(std::forward<Args>(args)...));
     }
 
     FrameInfo* sourceFrame() const { return m_sourceFrame.get(); }
     FrameInfo* targetFrame() const { return m_targetFrame.get(); }
-    std::optional<WTF::String> targetFrameName() const { return m_targetFrameName; }
+    Optional<WTF::String> targetFrameName() const { return m_targetFrameName; }
 
     const WebCore::ResourceRequest& request() const { return m_request; }
-    const WebCore::URL& originalURL() const { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
+    const WTF::URL& originalURL() const { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
 
     WebCore::NavigationType navigationType() const { return m_navigationActionData.navigationType; }
-    WebKit::WebEvent::Modifiers modifiers() const { return m_navigationActionData.modifiers; }
+    OptionSet<WebKit::WebEvent::Modifier> modifiers() const { return m_navigationActionData.modifiers; }
     WebKit::WebMouseEvent::Button mouseButton() const { return m_navigationActionData.mouseButton; }
     WebKit::WebMouseEvent::SyntheticClickType syntheticClickType() const { return m_navigationActionData.syntheticClickType; }
     WebCore::FloatPoint clickLocationInRootViewCoordinates() const { return m_navigationActionData.clickLocationInRootViewCoordinates; }
@@ -58,12 +59,20 @@ public:
     bool shouldOpenAppLinks() const { return m_shouldOpenAppLinks && m_navigationActionData.shouldOpenExternalURLsPolicy == WebCore::ShouldOpenExternalURLsPolicy::ShouldAllow; }
     bool shouldPerformDownload() const { return !m_navigationActionData.downloadAttribute.isNull(); }
     bool isRedirect() const { return m_navigationActionData.isRedirect; }
+    WebCore::ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy() const { return m_navigationActionData.shouldOpenExternalURLsPolicy; }
 
     bool isProcessingUserGesture() const { return m_userInitiatedAction; }
     UserInitiatedAction* userInitiatedAction() const { return m_userInitiatedAction.get(); }
 
+    Navigation* mainFrameNavigation() const { return m_mainFrameNavigation.get(); }
+
+#if HAVE(APP_SSO)
+    bool shouldPerformSOAuthorization() { return m_shouldPerformSOAuthorization; }
+    void unsetShouldPerformSOAuthorization() { m_shouldPerformSOAuthorization = false; }
+#endif
+
 private:
-NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, std::optional<WTF::String> targetFrameName, WebCore::ResourceRequest&& request, const WebCore::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction)
+    NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, Optional<WTF::String> targetFrameName, WebCore::ResourceRequest&& request, const WTF::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction, API::Navigation* mainFrameNavigation)
         : m_sourceFrame(sourceFrame)
         , m_targetFrame(targetFrame)
         , m_targetFrameName(targetFrameName)
@@ -72,21 +81,31 @@ NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::Frame
         , m_shouldOpenAppLinks(shouldOpenAppLinks)
         , m_userInitiatedAction(WTFMove(userInitiatedAction))
         , m_navigationActionData(WTFMove(navigationActionData))
+        , m_mainFrameNavigation(mainFrameNavigation)
+    {
+    }
+
+    NavigationAction(WebKit::NavigationActionData&& navigationActionData, API::FrameInfo* sourceFrame, API::FrameInfo* targetFrame, Optional<WTF::String> targetFrameName, WebCore::ResourceRequest&& request, const WTF::URL& originalURL, bool shouldOpenAppLinks, RefPtr<UserInitiatedAction>&& userInitiatedAction)
+        : NavigationAction(WTFMove(navigationActionData), sourceFrame, targetFrame, targetFrameName, WTFMove(request), originalURL, shouldOpenAppLinks, WTFMove(userInitiatedAction), nullptr)
     {
     }
 
     RefPtr<FrameInfo> m_sourceFrame;
     RefPtr<FrameInfo> m_targetFrame;
-    std::optional<WTF::String> m_targetFrameName;
+    Optional<WTF::String> m_targetFrameName;
 
     WebCore::ResourceRequest m_request;
-    WebCore::URL m_originalURL;
+    WTF::URL m_originalURL;
 
     bool m_shouldOpenAppLinks;
+#if HAVE(APP_SSO)
+    bool m_shouldPerformSOAuthorization { true };
+#endif
 
     RefPtr<UserInitiatedAction> m_userInitiatedAction;
 
     WebKit::NavigationActionData m_navigationActionData;
+    RefPtr<Navigation> m_mainFrameNavigation;
 };
 
 } // namespace API

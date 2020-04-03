@@ -26,19 +26,17 @@
 #import "config.h"
 #import "_WKAutomationSessionInternal.h"
 
-#if WK_API_ENABLED
-
 #import "AutomationSessionClient.h"
 #import "WKAPICast.h"
 #import "WKProcessPool.h"
-#import "WeakObjCPtr.h"
 #import "WebAutomationSession.h"
 #import "_WKAutomationSessionConfiguration.h"
 #import "_WKAutomationSessionDelegate.h"
+#import <wtf/WeakObjCPtr.h>
 
 @implementation _WKAutomationSession {
     RetainPtr<_WKAutomationSessionConfiguration> _configuration;
-    WebKit::WeakObjCPtr<id <_WKAutomationSessionDelegate>> _delegate;
+    WeakObjCPtr<id <_WKAutomationSessionDelegate>> _delegate;
 }
 
 - (instancetype)init
@@ -102,6 +100,11 @@
     return _session->isSimulatingUserInteraction();
 }
 
+- (void)terminate
+{
+    _session->terminate();
+}
+
 #if PLATFORM(MAC)
 - (BOOL)wasEventSynthesizedForAutomation:(NSEvent *)event
 {
@@ -122,5 +125,3 @@
 }
 
 @end
-
-#endif // WK_API_ENABLED

@@ -26,7 +26,7 @@
 #import "config.h"
 #import "WKImagePreviewViewController.h"
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 
 #import <UIKitSPI.h>
 #import <WebCore/IntSize.h>
@@ -53,6 +53,7 @@
     _image = image;
 
     _imageView = adoptNS([[UIImageView alloc] initWithFrame:CGRectZero]);
+    _imageView.get().contentMode = UIViewContentModeScaleAspectFill;
     RetainPtr<UIImage> uiImage = adoptNS([[UIImage alloc] initWithCGImage:_image.get()]);
     [_imageView setImage:uiImage.get()];
 
@@ -92,13 +93,16 @@ static CGSize _scaleSizeWithinSize(CGSize source, CGSize destination)
 }
 
 #if HAVE(LINK_PREVIEW)
-- (NSArray <UIViewControllerPreviewAction *> *)previewActions
+ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
+- (NSArray<UIPreviewAction *> *)previewActionItems
+ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
-    NSMutableArray<UIViewControllerPreviewAction *> *previewActions = [NSMutableArray array];
+    NSMutableArray<UIPreviewAction *> *previewActions = [NSMutableArray array];
     for (_WKElementAction *imageAction in _imageActions.get()) {
-        UIViewControllerPreviewAction *previewAction = [UIViewControllerPreviewAction actionWithTitle:imageAction.title handler:^(UIViewControllerPreviewAction *action, UIViewController *previewViewController) {
+        UIPreviewAction *previewAction = [UIPreviewAction actionWithTitle:imageAction.title style:UIPreviewActionStyleDefault handler:^(UIPreviewAction *action, UIViewController *previewViewController) {
             [imageAction runActionWithElementInfo:_activatedElementInfo.get()];
         }];
+        previewAction.image = [_WKElementAction imageForElementActionType:imageAction.type];
 
         [previewActions addObject:previewAction];
     }

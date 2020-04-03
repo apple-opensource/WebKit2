@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StorageAreaMap.h"
 
+#include "NetworkProcessConnection.h"
 #include "StorageAreaImpl.h"
 #include "StorageAreaMapMessages.h"
 #include "StorageManagerMessages.h"
@@ -35,7 +36,7 @@
 #include "WebProcess.h"
 #include <WebCore/DOMWindow.h>
 #include <WebCore/Document.h>
-#include <WebCore/MainFrame.h>
+#include <WebCore/Frame.h>
 #include <WebCore/Page.h>
 #include <WebCore/PageGroup.h>
 #include <WebCore/SecurityOriginData.h>
@@ -44,9 +45,8 @@
 #include <WebCore/StorageMap.h>
 #include <WebCore/StorageType.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 static uint64_t generateStorageMapID()
 {
@@ -70,36 +70,18 @@ StorageAreaMap::StorageAreaMap(StorageNamespaceImpl* storageNamespace, Ref<WebCo
     , m_hasPendingClear(false)
     , m_hasPendingGetValues(false)
 {
-    switch (m_storageType) {
-    case StorageType::Local:
-    case StorageType::TransientLocal:
-        if (SecurityOrigin* topLevelOrigin = storageNamespace->topLevelOrigin())
-            WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::CreateTransientLocalStorageMap(m_storageMapID, storageNamespace->storageNamespaceID(), SecurityOriginData::fromSecurityOrigin(*topLevelOrigin), SecurityOriginData::fromSecurityOrigin(m_securityOrigin)), 0);
-        else
-            WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::CreateLocalStorageMap(m_storageMapID, storageNamespace->storageNamespaceID(), SecurityOriginData::fromSecurityOrigin(m_securityOrigin)), 0);
-
-        break;
-
-    case StorageType::Session:
-        WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::CreateSessionStorageMap(m_storageMapID, storageNamespace->storageNamespaceID(), SecurityOriginData::fromSecurityOrigin(m_securityOrigin)), 0);
-        break;
-
-    case StorageType::EphemeralLocal:
-        // The UI process is not involved for EphemeralLocal storages.
-        return;
-    }
-
-    WebProcess::singleton().addMessageReceiver(Messages::StorageAreaMap::messageReceiverName(), m_storageMapID, *this);
+    WebProcess::singleton().registerStorageAreaMap(*this);
+    connect();
 }
 
 StorageAreaMap::~StorageAreaMap()
 {
-    if (m_storageType != StorageType::EphemeralLocal) {
-        WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::DestroyStorageMap(m_storageMapID), 0);
-        WebProcess::singleton().removeMessageReceiver(Messages::StorageAreaMap::messageReceiverName(), m_storageMapID);
-    }
+    if (m_storageType != StorageType::EphemeralLocal)
+        WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::DestroyStorageMap(m_storageMapID), 0);
 
     m_storageNamespace->didDestroyStorageAreaMap(*this);
+
+    WebProcess::singleton().unregisterStorageAreaMap(*this);
 }
 
 unsigned StorageAreaMap::length()
@@ -140,7 +122,7 @@ void StorageAreaMap::setItem(Frame* sourceFrame, StorageAreaImpl* sourceArea, co
 
     m_pendingValueChanges.add(key);
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::SetItem(m_storageMapID, sourceArea->storageAreaID(), m_currentSeed, key, value, sourceFrame->document()->url()), 0);
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::SetItem(m_securityOrigin->data(), m_storageMapID, sourceArea->storageAreaID(), m_currentSeed, key, value, sourceFrame->document()->url()), 0);
 }
 
 void StorageAreaMap::removeItem(WebCore::Frame* sourceFrame, StorageAreaImpl* sourceArea, const String& key)
@@ -156,7 +138,7 @@ void StorageAreaMap::removeItem(WebCore::Frame* sourceFrame, StorageAreaImpl* so
 
     m_pendingValueChanges.add(key);
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::RemoveItem(m_storageMapID, sourceArea->storageAreaID(), m_currentSeed, key, sourceFrame->document()->url()), 0);
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::RemoveItem(m_securityOrigin->data(), m_storageMapID, sourceArea->storageAreaID(), m_currentSeed, key, sourceFrame->document()->url()), 0);
 }
 
 void StorageAreaMap::clear(WebCore::Frame* sourceFrame, StorageAreaImpl* sourceArea)
@@ -165,7 +147,7 @@ void StorageAreaMap::clear(WebCore::Frame* sourceFrame, StorageAreaImpl* sourceA
 
     m_hasPendingClear = true;
     m_storageMap = StorageMap::create(m_quotaInBytes);
-    WebProcess::singleton().parentProcessConnection()->send(Messages::StorageManager::Clear(m_storageMapID, sourceArea->storageAreaID(), m_currentSeed, sourceFrame->document()->url()), 0);
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::Clear(m_securityOrigin->data(), m_storageMapID, sourceArea->storageAreaID(), m_currentSeed, sourceFrame->document()->url()), 0);
 }
 
 bool StorageAreaMap::contains(const String& key)
@@ -187,20 +169,34 @@ void StorageAreaMap::resetValues()
 
 void StorageAreaMap::loadValuesIfNeeded()
 {
+    connect();
+
     if (m_storageMap)
         return;
 
+    // The StorageManager::GetValues() IPC may be very slow because it may need to fetch the values from disk and there may be a lot
+    // of data.
+    IPC::UnboundedSynchronousIPCScope unboundedSynchronousIPCScope;
+
     HashMap<String, String> values;
-    // FIXME: This should use a special sendSync flag to indicate that we don't want to process incoming messages while waiting for a reply.
-    // (This flag does not yet exist). Since loadValuesIfNeeded() ends up being called from within JavaScript code, processing incoming synchronous messages
-    // could lead to weird reentrency bugs otherwise.
-    WebProcess::singleton().parentProcessConnection()->sendSync(Messages::StorageManager::GetValues(m_storageMapID, m_currentSeed), Messages::StorageManager::GetValues::Reply(values), 0);
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().sendSync(Messages::StorageManager::GetValues(m_storageMapID, m_currentSeed), Messages::StorageManager::GetValues::Reply(values), 0);
 
     m_storageMap = StorageMap::create(m_quotaInBytes);
-    m_storageMap->importItems(values);
+    m_storageMap->importItems(WTFMove(values));
 
     // We want to ignore all changes until we get the DidGetValues message.
     m_hasPendingGetValues = true;
+}
+
+bool StorageAreaMap::prewarm()
+{
+    if (m_didPrewarm || m_storageMap)
+        return false;
+    m_didPrewarm = true;
+
+    connect();
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::Prewarm(m_storageMapID), 0);
+    return true;
 }
 
 void StorageAreaMap::didGetValues(uint64_t storageMapSeed)
@@ -310,7 +306,7 @@ void StorageAreaMap::dispatchStorageEvent(uint64_t sourceStorageAreaID, const St
         applyChange(key, newValue);
     }
 
-    if (storageType() == StorageType::Session)
+    if (storageType() == StorageType::Session || storageType() == StorageType::EphemeralLocal)
         dispatchSessionStorageEvent(sourceStorageAreaID, key, oldValue, newValue, urlString);
     else
         dispatchLocalStorageEvent(sourceStorageAreaID, key, oldValue, newValue, urlString);
@@ -323,11 +319,9 @@ void StorageAreaMap::clearCache()
 
 void StorageAreaMap::dispatchSessionStorageEvent(uint64_t sourceStorageAreaID, const String& key, const String& oldValue, const String& newValue, const String& urlString)
 {
-    ASSERT(storageType() == StorageType::Session);
-
-    // Namespace IDs for session storage namespaces are equivalent to web page IDs
+    // Namespace IDs for session storage namespaces and ephemeral local storage namespaces are equivalent to web page IDs
     // so we can get the right page here.
-    WebPage* webPage = WebProcess::singleton().webPage(m_storageNamespaceID);
+    WebPage* webPage = WebProcess::singleton().webPage(makeObjectIdentifier<PageIdentifierType>(m_storageNamespaceID));
     if (!webPage)
         return;
 
@@ -352,7 +346,7 @@ void StorageAreaMap::dispatchSessionStorageEvent(uint64_t sourceStorageAreaID, c
         frames.append(frame);
     }
 
-    StorageEventDispatcher::dispatchSessionStorageEventsToFrames(*page, frames, key, oldValue, newValue, urlString, SecurityOriginData::fromSecurityOrigin(m_securityOrigin));
+    StorageEventDispatcher::dispatchSessionStorageEventsToFrames(*page, frames, key, oldValue, newValue, urlString, m_securityOrigin->data());
 }
 
 void StorageAreaMap::dispatchLocalStorageEvent(uint64_t sourceStorageAreaID, const String& key, const String& oldValue, const String& newValue, const String& urlString)
@@ -383,7 +377,40 @@ void StorageAreaMap::dispatchLocalStorageEvent(uint64_t sourceStorageAreaID, con
         }
     }
 
-    StorageEventDispatcher::dispatchLocalStorageEventsToFrames(pageGroup, frames, key, oldValue, newValue, urlString, SecurityOriginData::fromSecurityOrigin(m_securityOrigin));
+    StorageEventDispatcher::dispatchLocalStorageEventsToFrames(pageGroup, frames, key, oldValue, newValue, urlString, m_securityOrigin->data());
+}
+
+void StorageAreaMap::connect()
+{
+    if (!m_isDisconnected)
+        return;
+
+    switch (m_storageType) {
+    case StorageType::Local:
+    case StorageType::EphemeralLocal:
+    case StorageType::TransientLocal:
+        if (SecurityOrigin* topLevelOrigin = m_storageNamespace->topLevelOrigin())
+            WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::CreateTransientLocalStorageMap(m_storageMapID, m_storageNamespace->storageNamespaceID(), topLevelOrigin->data(), m_securityOrigin->data()), 0);
+        else
+            WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::CreateLocalStorageMap(m_storageMapID, m_storageNamespace->storageNamespaceID(), m_securityOrigin->data()), 0);
+        break;
+    case StorageType::Session:
+        WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::CreateSessionStorageMap(m_storageMapID, m_storageNamespace->storageNamespaceID(), m_securityOrigin->data()), 0);
+    }
+
+    if (m_storageMap)
+        WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::StorageManager::SetItems(m_storageMapID, m_storageMap->items()), 0);
+    m_isDisconnected = false;
+}
+
+void StorageAreaMap::disconnect()
+{
+    m_isDisconnected = true;
+    if (m_storageType == StorageType::Session && m_storageMap) {
+        m_pendingValueChanges.clear();
+        m_hasPendingClear = false;
+    } else
+        resetValues();
 }
 
 } // namespace WebKit

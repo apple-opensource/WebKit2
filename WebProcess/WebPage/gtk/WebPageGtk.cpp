@@ -29,13 +29,11 @@
 #include "WebPage.h"
 
 #include "EditorState.h"
-#include "NotImplemented.h"
 #include "WebEvent.h"
 #include "WebFrame.h"
-#include "WebPageAccessibilityObject.h"
+#include "WebKitWebPageAccessibilityObject.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
-#include "WindowsKeyboardCodes.h"
 #include <WebCore/BackForwardController.h>
 #include <WebCore/Editor.h>
 #include <WebCore/EventHandler.h>
@@ -43,29 +41,35 @@
 #include <WebCore/Frame.h>
 #include <WebCore/FrameView.h>
 #include <WebCore/KeyboardEvent.h>
+#include <WebCore/NotImplemented.h>
 #include <WebCore/Page.h>
 #include <WebCore/PasteboardHelper.h>
 #include <WebCore/PlatformKeyboardEvent.h>
 #include <WebCore/Settings.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/UserAgent.h>
+#include <WebCore/WindowsKeyboardCodes.h>
+#include <gtk/gtk.h>
 #include <wtf/glib/GUniquePtr.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 void WebPage::platformInitialize()
 {
-#if HAVE(ACCESSIBILITY)
+#if ENABLE(ACCESSIBILITY)
     // Create the accessible object (the plug) that will serve as the
     // entry point to the Web process, and send a message to the UI
     // process to connect the two worlds through the accessibility
     // object there specifically placed for that purpose (the socket).
-    m_accessibilityObject = adoptGRef(webPageAccessibilityObjectNew(this));
+    m_accessibilityObject = adoptGRef(webkitWebPageAccessibilityObjectNew(this));
     GUniquePtr<gchar> plugID(atk_plug_get_id(ATK_PLUG(m_accessibilityObject.get())));
     send(Messages::WebPageProxy::BindAccessibilityTree(String(plugID.get())));
 #endif
+}
+
+void WebPage::platformReinitialize()
+{
 }
 
 void WebPage::platformDetach()
@@ -108,16 +112,6 @@ void WebPage::platformEditorState(Frame& frame, EditorState& result, IncludePost
     }
 }
 
-#if HAVE(ACCESSIBILITY)
-void WebPage::updateAccessibilityTree()
-{
-    if (!m_accessibilityObject)
-        return;
-
-    webPageAccessibilityObjectRefresh(m_accessibilityObject.get());
-}
-#endif
-
 bool WebPage::performDefaultBehaviorForKeyEvent(const WebKeyboardEvent& keyboardEvent)
 {
     if (keyboardEvent.type() != WebEvent::KeyDown && keyboardEvent.type() != WebEvent::RawKeyDown)
@@ -158,34 +152,10 @@ bool WebPage::performDefaultBehaviorForKeyEvent(const WebKeyboardEvent& keyboard
     return true;
 }
 
-bool WebPage::platformHasLocalDataForURL(const URL&)
-{
-    notImplemented();
-    return false;
-}
-
-String WebPage::cachedResponseMIMETypeForURL(const URL&)
-{
-    notImplemented();
-    return String();
-}
-
 bool WebPage::platformCanHandleRequest(const ResourceRequest&)
 {
     notImplemented();
     return false;
-}
-
-String WebPage::cachedSuggestedFilenameForURL(const URL&)
-{
-    notImplemented();
-    return String();
-}
-
-RefPtr<SharedBuffer> WebPage::cachedResponseDataForURL(const URL&)
-{
-    notImplemented();
-    return 0;
 }
 
 String WebPage::platformUserAgent(const URL& url) const
@@ -196,14 +166,13 @@ String WebPage::platformUserAgent(const URL& url) const
     return WebCore::standardUserAgentForURL(url);
 }
 
-#if HAVE(GTK_GESTURES)
-void WebPage::getCenterForZoomGesture(const IntPoint& centerInViewCoordinates, IntPoint& result)
+void WebPage::getCenterForZoomGesture(const IntPoint& centerInViewCoordinates, CompletionHandler<void(WebCore::IntPoint&&)>&& completionHandler)
 {
-    result = mainFrameView()->rootViewToContents(centerInViewCoordinates);
+    IntPoint result = mainFrameView()->rootViewToContents(centerInViewCoordinates);
     double scale = m_page->pageScaleFactor();
     result.scale(1 / scale, 1 / scale);
+    completionHandler(WTFMove(result));
 }
-#endif
 
 void WebPage::setInputMethodState(bool enabled)
 {
@@ -223,6 +192,22 @@ void WebPage::collapseSelectionInFrame(uint64_t frameID)
     // Collapse the selection without clearing it.
     const VisibleSelection& selection = frame->coreFrame()->selection().selection();
     frame->coreFrame()->selection().setBase(selection.extent(), selection.affinity());
+}
+
+void WebPage::showEmojiPicker(Frame& frame)
+{
+    CompletionHandler<void(String)> completionHandler = [frame = makeRef(frame)](String result) {
+        if (!result.isEmpty())
+            frame->editor().insertText(result, nullptr);
+    };
+    sendWithAsyncReply(Messages::WebPageProxy::ShowEmojiPicker(frame.selection().absoluteCaretBounds()), WTFMove(completionHandler));
+}
+
+void WebPage::effectiveAppearanceDidChange(bool useDarkAppearance, bool useInactiveAppearance)
+{
+    if (auto* settings = gtk_settings_get_default())
+        g_object_set(settings, "gtk-application-prefer-dark-theme", useDarkAppearance, nullptr);
+    corePage()->effectiveAppearanceDidChange(useDarkAppearance, useInactiveAppearance);
 }
 
 } // namespace WebKit

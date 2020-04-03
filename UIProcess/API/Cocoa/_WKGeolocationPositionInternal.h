@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,15 @@
 
 #import "_WKGeolocationPosition.h"
 
-#if WK_API_ENABLED && TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE
 
 #import "WebGeolocationPosition.h"
 
 namespace WebKit {
 
-inline _WKGeolocationPosition *wrapper(WebKit::WebGeolocationPosition &position)
-{
-    ASSERT([position.wrapper() isKindOfClass:[_WKGeolocationPosition class]]);
-    return (_WKGeolocationPosition *)position.wrapper();
-}
+template<> struct WrapperTraits<WebGeolocationPosition> {
+    using WrapperClass = _WKGeolocationPosition;
+};
 
 }
 
@@ -45,4 +43,4 @@ inline _WKGeolocationPosition *wrapper(WebKit::WebGeolocationPosition &position)
 }
 @end
 
-#endif // WK_API_ENABLED && TARGET_OS_IPHONE
+#endif // TARGET_OS_IPHONE

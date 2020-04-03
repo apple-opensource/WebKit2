@@ -26,10 +26,9 @@
 #import "config.h"
 #import "WKUserContentControllerInternal.h"
 
-#if WK_API_ENABLED
-
 #import "APISerializedScriptValue.h"
 #import "APIUserContentWorld.h"
+#import "InjectUserScriptImmediately.h"
 #import "WKContentRuleListInternal.h"
 #import "WKFrameInfoInternal.h"
 #import "WKNSArray.h"
@@ -89,7 +88,7 @@
 
 - (void)addUserScript:(WKUserScript *)userScript
 {
-    _userContentControllerProxy->addUserScript(*userScript->_userScript);
+    _userContentControllerProxy->addUserScript(*userScript->_userScript, WebKit::InjectUserScriptImmediately::No);
 }
 
 - (void)removeAllUserScripts
@@ -177,6 +176,11 @@ private:
     _userContentControllerProxy->removeAllUserScripts(*userContentWorld->_userContentWorld);
 }
 
+- (void)_addUserScriptImmediately:(WKUserScript *)userScript
+{
+    _userContentControllerProxy->addUserScript(*userScript->_userScript, WebKit::InjectUserScriptImmediately::Yes);
+}
+
 - (void)_addUserContentFilter:(_WKUserContentFilter *)userContentFilter
 {
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -241,6 +245,3 @@ private:
 }
 
 @end
-
-#endif
-

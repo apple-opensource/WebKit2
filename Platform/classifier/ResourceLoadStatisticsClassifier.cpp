@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,34 +29,55 @@
 #include "Logging.h"
 #include <WebCore/ResourceLoadStatistics.h>
 
+namespace WebKit {
 using namespace WebCore;
 
-namespace WebKit {
-
-static const auto featureVectorLengthThreshold = 3;
-bool ResourceLoadStatisticsClassifier::hasPrevalentResourceCharacteristics(const ResourceLoadStatistics& resourceStatistic)
+static double vectorLength(unsigned a, unsigned b, unsigned c)
 {
-    auto subresourceUnderTopFrameOriginsCount = resourceStatistic.subresourceUnderTopFrameOrigins.size();
-    auto subresourceUniqueRedirectsToCount = resourceStatistic.subresourceUniqueRedirectsTo.size();
-    auto subframeUnderTopFrameOriginsCount = resourceStatistic.subframeUnderTopFrameOrigins.size();
-    
-    if (!subresourceUnderTopFrameOriginsCount
-        && !subresourceUniqueRedirectsToCount
-        && !subframeUnderTopFrameOriginsCount)
-        return false;
-    
-    if (subresourceUnderTopFrameOriginsCount > featureVectorLengthThreshold
-        || subresourceUniqueRedirectsToCount > featureVectorLengthThreshold
-        || subframeUnderTopFrameOriginsCount > featureVectorLengthThreshold)
-        return true;
+    return sqrt(a * a + b * b + c * c);
+}
 
-    return classify(subresourceUnderTopFrameOriginsCount, subresourceUniqueRedirectsToCount, subframeUnderTopFrameOriginsCount);
+static const auto featureVectorLengthThresholdHigh = 3;
+static const auto featureVectorLengthThresholdVeryHigh = 30;
+ResourceLoadPrevalence ResourceLoadStatisticsClassifier::calculateResourcePrevalence(const ResourceLoadStatistics& resourceStatistic, ResourceLoadPrevalence currentPrevalence)
+{
+    ASSERT(currentPrevalence != VeryHigh);
+
+    auto subresourceUnderTopFrameDomainsCount = resourceStatistic.subresourceUnderTopFrameDomains.size();
+    auto subresourceUniqueRedirectsToCount = resourceStatistic.subresourceUniqueRedirectsTo.size();
+    auto subframeUnderTopFrameDomainsCount = resourceStatistic.subframeUnderTopFrameDomains.size();
+    auto topFrameUniqueRedirectsToCount = resourceStatistic.topFrameUniqueRedirectsTo.size();
+
+    return calculateResourcePrevalence(subresourceUnderTopFrameDomainsCount, subresourceUniqueRedirectsToCount, subframeUnderTopFrameDomainsCount, topFrameUniqueRedirectsToCount, currentPrevalence);
+}
+
+ResourceLoadPrevalence ResourceLoadStatisticsClassifier::calculateResourcePrevalence(unsigned subresourceUnderTopFrameDomainsCount, unsigned subresourceUniqueRedirectsToCount, unsigned subframeUnderTopFrameDomainsCount, unsigned topFrameUniqueRedirectsToCount, ResourceLoadPrevalence currentPrevalence)
+{
+    if (!subresourceUnderTopFrameDomainsCount
+        && !subresourceUniqueRedirectsToCount
+        && !subframeUnderTopFrameDomainsCount
+        && !topFrameUniqueRedirectsToCount) {
+        return Low;
+    }
+
+    if (vectorLength(subresourceUnderTopFrameDomainsCount, subresourceUniqueRedirectsToCount, subframeUnderTopFrameDomainsCount) > featureVectorLengthThresholdVeryHigh)
+        return VeryHigh;
+
+    if (currentPrevalence == High
+        || subresourceUnderTopFrameDomainsCount > featureVectorLengthThresholdHigh
+        || subresourceUniqueRedirectsToCount > featureVectorLengthThresholdHigh
+        || subframeUnderTopFrameDomainsCount > featureVectorLengthThresholdHigh
+        || topFrameUniqueRedirectsToCount > featureVectorLengthThresholdHigh
+        || classify(subresourceUnderTopFrameDomainsCount, subresourceUniqueRedirectsToCount, subframeUnderTopFrameDomainsCount))
+        return High;
+
+    return Low;
 }
 
 bool ResourceLoadStatisticsClassifier::classifyWithVectorThreshold(unsigned a, unsigned b, unsigned c)
 {
     LOG(ResourceLoadStatistics, "ResourceLoadStatisticsClassifier::classifyWithVectorThreshold(): Classified with threshold.");
-    return sqrt(a * a + b * b + c * c) > featureVectorLengthThreshold;
+    return vectorLength(a, b, c) > featureVectorLengthThresholdHigh;
 }
     
 }

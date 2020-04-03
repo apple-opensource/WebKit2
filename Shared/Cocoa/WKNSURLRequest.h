@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,21 +25,16 @@
 
 #import "WKFoundation.h"
 
-#if WK_API_ENABLED
-
 #import "APIURLRequest.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline NSURLRequest *wrapper(API::URLRequest& request)
-{
-    return (NSURLRequest *)request.wrapper();
-}
+template<> struct WrapperTraits<API::URLRequest> {
+    using WrapperClass = NSURLRequest;
+};
 
 }
 
 @interface WKNSURLRequest : WKObject <NSCopying>
 @end
-
-#endif // WK_API_ENABLED

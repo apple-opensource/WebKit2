@@ -38,7 +38,12 @@
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
-#include <WebCore/MachSendRight.h>
+#include <wtf/MachSendRight.h>
+#endif
+
+#if PLATFORM(MAC)
+#include <WebCore/PlatformScreen.h>
+#include <WebCore/ScreenProperties.h>
 #endif
 
 #if USE(SOUP)
@@ -60,6 +65,8 @@ namespace WebKit {
 struct WebProcessCreationParameters {
     WebProcessCreationParameters();
     ~WebProcessCreationParameters();
+    WebProcessCreationParameters(WebProcessCreationParameters&&);
+    WebProcessCreationParameters& operator=(WebProcessCreationParameters&&);
 
     void encode(IPC::Encoder&) const;
     static bool decode(IPC::Decoder&, WebProcessCreationParameters&);
@@ -70,29 +77,17 @@ struct WebProcessCreationParameters {
 
     UserData initializationUserData;
 
-    String applicationCacheDirectory;
-    String applicationCacheFlatFileSubdirectoryName;
-    SandboxExtension::Handle applicationCacheDirectoryExtensionHandle;
-    String webSQLDatabaseDirectory;
-    SandboxExtension::Handle webSQLDatabaseDirectoryExtensionHandle;
-    String mediaCacheDirectory;
-    SandboxExtension::Handle mediaCacheDirectoryExtensionHandle;
-    String javaScriptConfigurationDirectory;
-    SandboxExtension::Handle javaScriptConfigurationDirectoryExtensionHandle;
-#if PLATFORM(MAC)
-    Vector<uint8_t> uiProcessCookieStorageIdentifier;
-#endif
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     SandboxExtension::Handle cookieStorageDirectoryExtensionHandle;
     SandboxExtension::Handle containerCachesDirectoryExtensionHandle;
     SandboxExtension::Handle containerTemporaryDirectoryExtensionHandle;
 #endif
-    SandboxExtension::Handle mediaKeyStorageDirectoryExtensionHandle;
 #if ENABLE(MEDIA_STREAM)
     SandboxExtension::Handle audioCaptureExtensionHandle;
     bool shouldCaptureAudioInUIProcess { false };
+    bool shouldCaptureVideoInUIProcess { false };
+    bool shouldCaptureDisplayInUIProcess { false };
 #endif
-    String mediaKeyStorageDirectory;
 
     String webCoreLoggingChannels;
     String webKitLoggingChannels;
@@ -108,22 +103,25 @@ struct WebProcessCreationParameters {
     Vector<String> urlSchemesRegisteredAsAlwaysRevalidated;
     Vector<String> urlSchemesRegisteredAsCachePartitioned;
     Vector<String> urlSchemesServiceWorkersCanHandle;
+    Vector<String> urlSchemesRegisteredAsCanDisplayOnlyIfCanRequest;
 
     Vector<String> fontWhitelist;
     Vector<String> languages;
+#if USE(GSTREAMER)
+    Vector<String> gstreamerOptions;
+#endif
 
     CacheModel cacheModel;
 
     double defaultRequestTimeoutInterval { INT_MAX };
 
-    bool shouldUseTestingNetworkSession { false };
     bool shouldAlwaysUseComplexTextCodePath { false };
     bool shouldEnableMemoryPressureReliefLogging { false };
     bool shouldSuppressMemoryPressureHandler { false };
     bool shouldUseFontSmoothing { true };
-    bool resourceLoadStatisticsEnabled { false };
     bool fullKeyboardAccessEnabled { false };
     bool memoryCacheDisabled { false };
+    bool attrStyleEnabled { false };
 
 #if ENABLE(SERVICE_CONTROLS)
     bool hasImageServices { false };
@@ -137,12 +135,13 @@ struct WebProcessCreationParameters {
 
 #if PLATFORM(COCOA)
     String uiProcessBundleIdentifier;
+    uint32_t uiProcessSDKVersion { 0 };
 #endif
 
     ProcessID presentingApplicationPID { 0 };
 
 #if PLATFORM(COCOA)
-    WebCore::MachSendRight acceleratedCompositingPort;
+    WTF::MachSendRight acceleratedCompositingPort;
 
     String uiProcessBundleResourcePath;
     SandboxExtension::Handle uiProcessBundleResourcePathExtensionHandle;
@@ -158,7 +157,7 @@ struct WebProcessCreationParameters {
     HashMap<String, bool> notificationPermissions;
 #endif
 
-    HashMap<PAL::SessionID, HashMap<unsigned, double>> plugInAutoStartOriginHashes;
+    HashMap<PAL::SessionID, HashMap<unsigned, WallTime>> plugInAutoStartOriginHashes;
     Vector<String> plugInAutoStartOrigins;
 
 #if ENABLE(NETSCAPE_PLUGIN_API)
@@ -169,16 +168,31 @@ struct WebProcessCreationParameters {
     RetainPtr<CFDataRef> networkATSContext;
 #endif
 
-#if OS(LINUX)
-    IPC::Attachment memoryPressureMonitorHandle;
-#endif
-
 #if PLATFORM(WAYLAND)
     String waylandCompositorDisplayName;
 #endif
 
 #if USE(SOUP)
     WebCore::SoupNetworkProxySettings proxySettings;
+#endif
+
+#if PLATFORM(COCOA)
+    Vector<String> mediaMIMETypes;
+#endif
+
+#if ENABLE(RESOURCE_LOAD_STATISTICS) && !RELEASE_LOG_DISABLED
+    bool shouldLogUserInteraction { false };
+#endif
+
+#if PLATFORM(MAC)
+    WebCore::ScreenProperties screenProperties;
+    bool useOverlayScrollbars { true };
+#endif
+
+#if USE(WPE_RENDERER)
+    bool isServiceWorkerProcess { false };
+    IPC::Attachment hostClientFileDescriptor;
+    CString implementationLibraryName;
 #endif
 };
 

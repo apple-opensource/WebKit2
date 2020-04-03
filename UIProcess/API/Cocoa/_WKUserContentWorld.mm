@@ -26,13 +26,11 @@
 #import "config.h"
 #import "_WKUserContentWorldInternal.h"
 
-#if WK_API_ENABLED
-
 @implementation _WKUserContentWorld
 
 + (_WKUserContentWorld *)worldWithName:(NSString *)name
 {
-    return [wrapper(API::UserContentWorld::worldWithName(name).leakRef()) autorelease];
+    return wrapper(API::UserContentWorld::worldWithName(name));
 }
 
 + (_WKUserContentWorld *)normalWorld
@@ -62,5 +60,3 @@
 }
 
 @end
-
-#endif

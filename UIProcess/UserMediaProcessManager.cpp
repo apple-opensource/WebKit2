@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2018 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -21,72 +21,23 @@
 
 #if ENABLE(MEDIA_STREAM)
 
+#include "Logging.h"
 #include "MediaDeviceSandboxExtensions.h"
-#include "WebPageMessages.h"
 #include "WebPageProxy.h"
+#include "WebProcessMessages.h"
 #include "WebProcessProxy.h"
+#include <WebCore/RealtimeMediaSourceCenter.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebKit {
 
 #if ENABLE(SANDBOX_EXTENSIONS)
-static const char* const audioExtensionPath = "com.apple.webkit.microphone";
-static const char* const videoExtensionPath = "com.apple.webkit.camera";
+static const ASCIILiteral audioExtensionPath { "com.apple.webkit.microphone"_s };
+static const ASCIILiteral videoExtensionPath { "com.apple.webkit.camera"_s };
 #endif
 
-class ProcessState {
-public:
-    ProcessState() { }
-    ProcessState(const ProcessState&) = delete;
-
-    void addRequestManager(UserMediaPermissionRequestManagerProxy&);
-    void removeRequestManager(UserMediaPermissionRequestManagerProxy&);
-    Vector<UserMediaPermissionRequestManagerProxy*>& managers() { return m_managers; }
-
-    enum SandboxExtensionsGranted {
-        None = 0,
-        Video = 1 << 0,
-        Audio = 1 << 1
-    };
-
-    SandboxExtensionsGranted sandboxExtensionsGranted() { return m_pageSandboxExtensionsGranted; }
-    void setSandboxExtensionsGranted(unsigned granted) { m_pageSandboxExtensionsGranted = static_cast<SandboxExtensionsGranted>(granted); }
-
-private:
-    Vector<UserMediaPermissionRequestManagerProxy*> m_managers;
-    SandboxExtensionsGranted m_pageSandboxExtensionsGranted { SandboxExtensionsGranted::None };
-};
-
-static HashMap<WebProcessProxy*, std::unique_ptr<ProcessState>>& stateMap()
-{
-    static NeverDestroyed<HashMap<WebProcessProxy*, std::unique_ptr<ProcessState>>> map;
-    return map;
-}
-
-static ProcessState& processState(WebProcessProxy& process)
-{
-    auto& state = stateMap().add(&process, nullptr).iterator->value;
-    if (state)
-        return *state;
-
-    state = std::make_unique<ProcessState>();
-    return *state;
-}
-
-void ProcessState::addRequestManager(UserMediaPermissionRequestManagerProxy& proxy)
-{
-    ASSERT(!m_managers.contains(&proxy));
-    m_managers.append(&proxy);
-}
-
-void ProcessState::removeRequestManager(UserMediaPermissionRequestManagerProxy& proxy)
-{
-    ASSERT(m_managers.contains(&proxy));
-    m_managers.removeFirstMatching([&proxy](auto other) {
-        return other == &proxy;
-    });
-}
+static const Seconds deviceChangeDebounceTimerInterval { 200_ms };
 
 UserMediaProcessManager& UserMediaProcessManager::singleton()
 {
@@ -94,128 +45,119 @@ UserMediaProcessManager& UserMediaProcessManager::singleton()
     return manager;
 }
 
-void UserMediaProcessManager::addUserMediaPermissionRequestManagerProxy(UserMediaPermissionRequestManagerProxy& proxy)
+UserMediaProcessManager::UserMediaProcessManager()
+    : m_debounceTimer(RunLoop::main(), this, &UserMediaProcessManager::captureDevicesChanged)
 {
-    processState(proxy.page().process()).addRequestManager(proxy);
-}
-
-void UserMediaProcessManager::removeUserMediaPermissionRequestManagerProxy(UserMediaPermissionRequestManagerProxy& proxy)
-{
-    endedCaptureSession(proxy);
-
-    auto& state = processState(proxy.page().process());
-    state.removeRequestManager(proxy);
-    if (state.managers().isEmpty()) {
-        auto it = stateMap().find(&proxy.page().process());
-        stateMap().remove(it);
-    }
 }
 
 void UserMediaProcessManager::muteCaptureMediaStreamsExceptIn(WebPageProxy& pageStartingCapture)
 {
 #if PLATFORM(COCOA)
-    for (auto& state : stateMap()) {
-        for (auto& manager : state.value->managers()) {
-            if (&manager->page() == &pageStartingCapture)
-                continue;
-            manager->page().setMediaStreamCaptureMuted(true);
-        }
-    }
+    UserMediaPermissionRequestManagerProxy::forEach([&pageStartingCapture](auto& proxy) {
+        if (&proxy.page() != &pageStartingCapture)
+            proxy.page().setMediaStreamCaptureMuted(true);
+    });
 #else
     UNUSED_PARAM(pageStartingCapture);
 #endif
 }
 
-void UserMediaProcessManager::willCreateMediaStream(UserMediaPermissionRequestManagerProxy& proxy, bool withAudio, bool withVideo)
+bool UserMediaProcessManager::willCreateMediaStream(UserMediaPermissionRequestManagerProxy& proxy, bool withAudio, bool withVideo)
 {
-#if ENABLE(SANDBOX_EXTENSIONS)
-    auto& processStartingCapture = proxy.page().process();
+    ASSERT(withAudio || withVideo);
 
-    ASSERT(stateMap().contains(&processStartingCapture));
+    if (m_denyNextRequest) {
+        m_denyNextRequest = false;
+        return false;
+    }
+    
+#if ENABLE(SANDBOX_EXTENSIONS) && USE(APPLE_INTERNAL_SDK)
+    auto& process = proxy.page().process();
+    size_t extensionCount = 0;
+
+    if (withAudio && !process.hasAudioCaptureExtension())
+        extensionCount++;
+    else
+        withAudio = false;
+
+    if (withVideo && !process.hasVideoCaptureExtension())
+        extensionCount++;
+    else
+        withVideo = false;
+
+    if (extensionCount) {
+        SandboxExtension::HandleArray handles;
+        Vector<String> ids;
+
+        if (!proxy.page().preferences().mockCaptureDevicesEnabled()) {
+            handles.allocate(extensionCount);
+            ids.reserveInitialCapacity(extensionCount);
+
+            if (withAudio && SandboxExtension::createHandleForGenericExtension(audioExtensionPath, handles[--extensionCount]))
+                ids.append(audioExtensionPath);
+
+            if (withVideo && SandboxExtension::createHandleForGenericExtension(videoExtensionPath, handles[--extensionCount]))
+                ids.append(videoExtensionPath);
+
+            if (ids.size() != handles.size()) {
+                WTFLogAlways("Could not create a required sandbox extension, capture will fail!");
+                return false;
+            }
+        }
+
+        for (const auto& id : ids)
+            RELEASE_LOG(WebRTC, "UserMediaProcessManager::willCreateMediaStream - granting extension %s", id.utf8().data());
+
+        if (withAudio)
+            process.grantAudioCaptureExtension();
+        if (withVideo)
+            process.grantVideoCaptureExtension();
+        process.send(Messages::WebProcess::GrantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensions(ids, WTFMove(handles))), 0);
+    }
+#else
+    UNUSED_PARAM(proxy);
+    UNUSED_PARAM(withAudio);
+    UNUSED_PARAM(withVideo);
+#endif
 
     proxy.page().activateMediaStreamCaptureInPage();
 
-    auto& state = processState(processStartingCapture);
-    size_t extensionCount = 0;
-    unsigned requiredExtensions = ProcessState::SandboxExtensionsGranted::None;
-
-    if (withAudio) {
-        requiredExtensions |= ProcessState::SandboxExtensionsGranted::Audio;
-        extensionCount++;
-    }
-    if (withVideo) {
-        requiredExtensions |= ProcessState::SandboxExtensionsGranted::Video;
-        extensionCount++;
-    }
-
-    unsigned currentExtensions = state.sandboxExtensionsGranted();
-
-    if (!(requiredExtensions & currentExtensions)) {
-        SandboxExtension::HandleArray handles;
-        handles.allocate(extensionCount);
-
-        Vector<String> ids;
-        ids.reserveCapacity(extensionCount);
-
-        if (withAudio && requiredExtensions & ProcessState::SandboxExtensionsGranted::Audio) {
-            if (SandboxExtension::createHandleForGenericExtension(audioExtensionPath, handles[--extensionCount])) {
-                ids.append(ASCIILiteral(audioExtensionPath));
-                currentExtensions |= ProcessState::SandboxExtensionsGranted::Audio;
-            }
-        }
-
-        if (withVideo && requiredExtensions & ProcessState::SandboxExtensionsGranted::Video) {
-            if (SandboxExtension::createHandleForGenericExtension(videoExtensionPath, handles[--extensionCount])) {
-                ids.append(ASCIILiteral(videoExtensionPath));
-                currentExtensions |= ProcessState::SandboxExtensionsGranted::Video;
-            }
-        }
-
-        state.setSandboxExtensionsGranted(currentExtensions);
-        processStartingCapture.send(Messages::WebPage::GrantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensions(ids, WTFMove(handles))), proxy.page().pageID());
-    }
-#endif
+    return true;
 }
 
-void UserMediaProcessManager::startedCaptureSession(UserMediaPermissionRequestManagerProxy& proxy)
-{
-    ASSERT(stateMap().contains(&proxy.page().process()));
-}
-
-void UserMediaProcessManager::endedCaptureSession(UserMediaPermissionRequestManagerProxy& proxy)
+void UserMediaProcessManager::revokeSandboxExtensionsIfNeeded(WebProcessProxy& process)
 {
 #if ENABLE(SANDBOX_EXTENSIONS)
-    ASSERT(stateMap().contains(&proxy.page().process()));
-
-    auto& state = processState(proxy.page().process());
     bool hasAudioCapture = false;
     bool hasVideoCapture = false;
-    for (auto& manager : state.managers()) {
-        if (manager->page().hasActiveAudioStream())
-            hasAudioCapture = true;
-        if (manager->page().hasActiveVideoStream())
-            hasVideoCapture = true;
-    }
+
+    UserMediaPermissionRequestManagerProxy::forEach([&hasAudioCapture, &hasVideoCapture, &process](auto& managerProxy) {
+        if (&process != &managerProxy.page().process())
+            return;
+        hasAudioCapture |= managerProxy.page().isCapturingAudio();
+        hasVideoCapture |= managerProxy.page().isCapturingVideo();
+    });
 
     if (hasAudioCapture && hasVideoCapture)
         return;
 
     Vector<String> params;
-    unsigned currentExtensions = state.sandboxExtensionsGranted();
-    if (!hasAudioCapture && currentExtensions & ProcessState::SandboxExtensionsGranted::Audio) {
-        params.append(ASCIILiteral(audioExtensionPath));
-        currentExtensions &= ~ProcessState::SandboxExtensionsGranted::Audio;
+    if (!hasAudioCapture && process.hasAudioCaptureExtension()) {
+        params.append(audioExtensionPath);
+        process.revokeAudioCaptureExtension();
     }
-    if (!hasVideoCapture && currentExtensions & ProcessState::SandboxExtensionsGranted::Video) {
-        params.append(ASCIILiteral(videoExtensionPath));
-        currentExtensions &= ~ProcessState::SandboxExtensionsGranted::Video;
+    if (!hasVideoCapture && process.hasVideoCaptureExtension()) {
+        params.append(videoExtensionPath);
+        process.revokeVideoCaptureExtension();
     }
 
     if (params.isEmpty())
         return;
 
-    state.setSandboxExtensionsGranted(currentExtensions);
-    proxy.page().process().send(Messages::WebPage::RevokeUserMediaDeviceSandboxExtensions(params), proxy.page().pageID());
+    for (const auto& id : params)
+        RELEASE_LOG(WebRTC, "UserMediaProcessManager::endedCaptureSession - revoking extension %s", id.utf8().data());
+
+    process.send(Messages::WebProcess::RevokeUserMediaDeviceSandboxExtensions(params), 0);
 #endif
 }
 
@@ -229,10 +171,55 @@ void UserMediaProcessManager::setCaptureEnabled(bool enabled)
     if (enabled)
         return;
 
-    for (auto& state : stateMap()) {
-        for (auto& manager : state.value->managers())
-            manager->stopCapture();
-    }
+    UserMediaPermissionRequestManagerProxy::forEach([](auto& proxy) {
+        proxy.stopCapture();
+    });
+}
+
+void UserMediaProcessManager::captureDevicesChanged()
+{
+    UserMediaPermissionRequestManagerProxy::forEach([](auto& proxy) {
+        proxy.captureDevicesChanged();
+    });
+}
+
+void UserMediaProcessManager::beginMonitoringCaptureDevices()
+{
+    static std::once_flag onceFlag;
+
+    std::call_once(onceFlag, [this] {
+        m_captureDevices = WebCore::RealtimeMediaSourceCenter::singleton().getMediaStreamDevices();
+
+        WebCore::RealtimeMediaSourceCenter::singleton().setDevicesChangedObserver([this]() {
+            auto oldDevices = WTFMove(m_captureDevices);
+            m_captureDevices = WebCore::RealtimeMediaSourceCenter::singleton().getMediaStreamDevices();
+
+            if (m_captureDevices.size() == oldDevices.size()) {
+                bool haveChanges = false;
+                for (auto &newDevice : m_captureDevices) {
+                    if (newDevice.type() != WebCore::CaptureDevice::DeviceType::Camera && newDevice.type() != WebCore::CaptureDevice::DeviceType::Microphone)
+                        continue;
+
+                    auto index = oldDevices.findMatching([&newDevice] (auto& oldDevice) {
+                        return newDevice.persistentId() == oldDevice.persistentId() && newDevice.enabled() != oldDevice.enabled();
+                    });
+
+                    if (index == notFound) {
+                        haveChanges = true;
+                        break;
+                    }
+                }
+
+                if (!haveChanges)
+                    return;
+            }
+
+            // When a device with camera and microphone is attached or detached, the CaptureDevice notification for
+            // the different devices won't arrive at the same time so delay a bit so we can coalesce the callbacks.
+            if (!m_debounceTimer.isActive())
+                m_debounceTimer.startOneShot(deviceChangeDebounceTimerInterval);
+        });
+    });
 }
 
 } // namespace WebKit

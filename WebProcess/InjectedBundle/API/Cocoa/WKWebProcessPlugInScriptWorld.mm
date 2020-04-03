@@ -26,23 +26,18 @@
 #import "config.h"
 #import "WKWebProcessPlugInScriptWorldInternal.h"
 
-#if WK_API_ENABLED
-
-using namespace WebKit;
-
 @implementation WKWebProcessPlugInScriptWorld {
-    API::ObjectStorage<InjectedBundleScriptWorld> _world;
+    API::ObjectStorage<WebKit::InjectedBundleScriptWorld> _world;
 }
 
 + (WKWebProcessPlugInScriptWorld *)world
 {
-    auto scriptWorld = InjectedBundleScriptWorld::create();
-    return [wrapper(scriptWorld.leakRef()) autorelease];
+    return WebKit::wrapper(WebKit::InjectedBundleScriptWorld::create());
 }
 
 + (WKWebProcessPlugInScriptWorld *)normalWorld
 {
-    return wrapper(InjectedBundleScriptWorld::normalWorld());
+    return WebKit::wrapper(WebKit::InjectedBundleScriptWorld::normalWorld());
 }
 
 - (void)dealloc
@@ -61,12 +56,17 @@ using namespace WebKit;
     _world->makeAllShadowRootsOpen();
 }
 
+- (void)disableOverrideBuiltinsBehavior
+{
+    _world->disableOverrideBuiltinsBehavior();
+}
+
 - (NSString *)name
 {
     return _world->name();
 }
 
-- (InjectedBundleScriptWorld&)_scriptWorld
+- (WebKit::InjectedBundleScriptWorld&)_scriptWorld
 {
     return *_world;
 }
@@ -79,5 +79,3 @@ using namespace WebKit;
 }
 
 @end
-
-#endif // WK_API_ENABLED

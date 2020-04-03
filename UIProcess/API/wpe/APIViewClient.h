@@ -43,7 +43,7 @@ public:
 
     virtual void frameDisplayed(WKWPE::View&) { }
     virtual void handleDownloadRequest(WKWPE::View&, WebKit::DownloadProxy&) { }
-    virtual JSGlobalContextRef javascriptGlobalContext() { return nullptr; }
+    virtual void willStartLoad(WKWPE::View&) { }
 };
 
 } // namespace API

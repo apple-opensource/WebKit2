@@ -32,20 +32,25 @@
 #import "NetscapePluginModule.h"
 #import "SandboxUtilities.h"
 #import <WebCore/PluginBlacklist.h>
+#import <WebCore/RuntimeEnabledFeatures.h>
+#import <pwd.h>
 #import <wtf/HashSet.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/text/CString.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 Vector<String> PluginInfoStore::pluginsDirectories()
 {
     Vector<String> pluginsDirectories;
+    pluginsDirectories.reserveInitialCapacity(2);
 
-    pluginsDirectories.append([NSHomeDirectory() stringByAppendingPathComponent:@"Library/Internet Plug-Ins"]);
-    pluginsDirectories.append("/Library/Internet Plug-Ins");
+    ASCIILiteral pluginPath { "/Library/Internet Plug-Ins"_s };
+
+    if (auto* pw = getpwuid(getuid()))
+        pluginsDirectories.uncheckedAppend(makeString(pw->pw_dir, pluginPath));
+    pluginsDirectories.uncheckedAppend(pluginPath);
     
     return pluginsDirectories;
 }
@@ -55,9 +60,9 @@ Vector<String> PluginInfoStore::pluginPathsInDirectory(const String& directory)
     Vector<String> pluginPaths;
 
     RetainPtr<CFStringRef> directoryCFString = directory.createCFString();
-    NSArray *filenames = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:(NSString *)directoryCFString.get() error:nil];
+    NSArray *filenames = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:(__bridge NSString *)directoryCFString.get() error:nil];
     for (NSString *filename in filenames)
-        pluginPaths.append([(NSString *)directoryCFString.get() stringByAppendingPathComponent:filename]);
+        pluginPaths.append([(__bridge NSString *)directoryCFString.get() stringByAppendingPathComponent:filename]);
     
     return pluginPaths;
 }

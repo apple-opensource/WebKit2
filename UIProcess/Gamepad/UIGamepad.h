@@ -27,6 +27,7 @@
 
 #if ENABLE(GAMEPAD)
 
+#include <wtf/MonotonicTime.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -39,6 +40,7 @@ namespace WebKit {
 class GamepadData;
 
 class UIGamepad {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     UIGamepad(WebCore::PlatformGamepad&);
 
@@ -54,7 +56,7 @@ private:
     String m_id;
     Vector<double> m_axisValues;
     Vector<double> m_buttonValues;
-    double m_lastUpdateTime;
+    MonotonicTime m_lastUpdateTime;
 };
 
 }

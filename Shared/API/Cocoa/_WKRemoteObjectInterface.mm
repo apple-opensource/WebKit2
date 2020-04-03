@@ -26,8 +26,6 @@
 #import "config.h"
 #import "_WKRemoteObjectInterfaceInternal.h"
 
-#if WK_API_ENABLED
-
 #import <objc/runtime.h>
 #import <wtf/HashMap.h>
 #import <wtf/NeverDestroyed.h>
@@ -46,14 +44,14 @@ const char *_protocol_getMethodTypeEncoding(Protocol *p, SEL sel, BOOL isRequire
 @end
 
 struct MethodInfo {
-    Vector<HashSet<Class>> allowedArgumentClasses;
+    Vector<HashSet<CFTypeRef>> allowedArgumentClasses;
 
     struct ReplyInfo {
         NSUInteger replyPosition;
         CString replySignature;
-        Vector<HashSet<Class>> allowedReplyClasses;
+        Vector<HashSet<CFTypeRef>> allowedReplyClasses;
     };
-    std::optional<ReplyInfo> replyInfo;
+    Optional<ReplyInfo> replyInfo;
 };
 
 @implementation _WKRemoteObjectInterface {
@@ -70,12 +68,15 @@ static bool isContainerClass(Class objectClass)
     return objectClass == arrayClass || objectClass == dictionaryClass;
 }
 
-static HashSet<Class>& propertyListClasses()
+static HashSet<CFTypeRef>& propertyListClasses()
 {
-    static LazyNeverDestroyed<HashSet<Class>> propertyListClasses;
+    static LazyNeverDestroyed<HashSet<CFTypeRef>> propertyListClasses;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        propertyListClasses.construct(std::initializer_list<Class> { [NSArray class], [NSDictionary class], [NSNumber class], [NSString class] });
+        propertyListClasses.construct(std::initializer_list<CFTypeRef> {
+            (__bridge CFTypeRef)[NSArray class], (__bridge CFTypeRef)[NSDictionary class],
+            (__bridge CFTypeRef)[NSNumber class], (__bridge CFTypeRef)[NSString class]
+        });
     });
 
     return propertyListClasses;
@@ -83,7 +84,7 @@ static HashSet<Class>& propertyListClasses()
 
 static void initializeMethod(MethodInfo& methodInfo, Protocol *protocol, SEL selector, NSMethodSignature *methodSignature, bool forReplyBlock)
 {
-    Vector<HashSet<Class>> allowedClasses;
+    Vector<HashSet<CFTypeRef>> allowedClasses;
 
     NSUInteger firstArgument = forReplyBlock ? 1 : 2;
     NSUInteger argumentCount = methodSignature.numberOfArguments;
@@ -127,7 +128,7 @@ static void initializeMethod(MethodInfo& methodInfo, Protocol *protocol, SEL sel
             continue;
         }
 
-        allowedClasses.append({ objectClass });
+        allowedClasses.append({ (__bridge CFTypeRef)objectClass });
     }
 
     if (forReplyBlock)
@@ -162,14 +163,12 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
 static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *protocol)
 {
     unsigned conformingProtocolCount;
-    Protocol** conformingProtocols = protocol_copyProtocolList(interface->_protocol, &conformingProtocolCount);
+    auto conformingProtocols = protocol_copyProtocolList(protocol, &conformingProtocolCount);
 
     for (unsigned i = 0; i < conformingProtocolCount; ++i) {
-        Protocol* conformingProtocol = conformingProtocols[i];
-
+        auto conformingProtocol = conformingProtocols[i];
         if (conformingProtocol == @protocol(NSObject))
             continue;
-
         initializeMethods(interface, conformingProtocol);
     }
 
@@ -214,8 +213,8 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
             auto result = adoptNS([[NSMutableString alloc] initWithString:@"{"]);
 
             auto orderedArgumentClasses = copyToVector(allowedArgumentClasses);
-            std::sort(orderedArgumentClasses.begin(), orderedArgumentClasses.end(), [](Class a, Class b) {
-                return CString(class_getName(a)) < CString(class_getName(b));
+            std::sort(orderedArgumentClasses.begin(), orderedArgumentClasses.end(), [](CFTypeRef a, CFTypeRef b) {
+                return CString(class_getName((__bridge Class)a)) < CString(class_getName((__bridge Class)b));
             });
 
             bool needsComma = false;
@@ -223,7 +222,7 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
                 if (needsComma)
                     [result appendString:@", "];
 
-                [result appendFormat:@"%s", class_getName(argumentClass)];
+                [result appendFormat:@"%s", class_getName((__bridge Class)argumentClass)];
                 needsComma = true;
             }
 
@@ -254,7 +253,7 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
     return result.autorelease();
 }
 
-static HashSet<Class>& classesForSelectorArgument(_WKRemoteObjectInterface *interface, SEL selector, NSUInteger argumentIndex, bool replyBlock)
+static HashSet<CFTypeRef>& classesForSelectorArgument(_WKRemoteObjectInterface *interface, SEL selector, NSUInteger argumentIndex, bool replyBlock)
 {
     auto it = interface->_methods.find(selector);
     if (it == interface->_methods.end())
@@ -282,16 +281,16 @@ static HashSet<Class>& classesForSelectorArgument(_WKRemoteObjectInterface *inte
     auto result = adoptNS([[NSMutableSet alloc] init]);
 
     for (auto allowedClass : classesForSelectorArgument(self, selector, argumentIndex, ofReply))
-        [result addObject:allowedClass];
+        [result addObject:(__bridge Class)allowedClass];
 
     return result.autorelease();
 }
 
 - (void)setClasses:(NSSet *)classes forSelector:(SEL)selector argumentIndex:(NSUInteger)argumentIndex ofReply:(BOOL)ofReply
 {
-    HashSet<Class> allowedClasses;
+    HashSet<CFTypeRef> allowedClasses;
     for (Class allowedClass in classes)
-        allowedClasses.add(allowedClass);
+        allowedClasses.add((__bridge CFTypeRef)allowedClass);
 
     classesForSelectorArgument(self, selector, argumentIndex, ofReply) = WTFMove(allowedClasses);
 }
@@ -346,14 +345,14 @@ static const char* methodArgumentTypeEncodingForSelector(Protocol *protocol, SEL
     return [NSMethodSignature signatureWithObjCTypes:methodInfo.replyInfo->replySignature.data()];
 }
 
-- (const Vector<HashSet<Class>>&)_allowedArgumentClassesForSelector:(SEL)selector
+- (const Vector<HashSet<CFTypeRef>>&)_allowedArgumentClassesForSelector:(SEL)selector
 {
     ASSERT(_methods.contains(selector));
 
     return _methods.find(selector)->value.allowedArgumentClasses;
 }
 
-- (const Vector<HashSet<Class>>&)_allowedArgumentClassesForReplyBlockOfSelector:(SEL)selector
+- (const Vector<HashSet<CFTypeRef>>&)_allowedArgumentClassesForReplyBlockOfSelector:(SEL)selector
 {
     ASSERT(_methods.contains(selector));
 
@@ -361,5 +360,3 @@ static const char* methodArgumentTypeEncodingForSelector(Protocol *protocol, SEL
 }
 
 @end
-
-#endif // WK_API_ENABLED

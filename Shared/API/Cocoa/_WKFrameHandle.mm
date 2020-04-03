@@ -26,10 +26,6 @@
 #import "config.h"
 #import "_WKFrameHandleInternal.h"
 
-#if WK_API_ENABLED
-
-using namespace WebKit;
-
 @implementation _WKFrameHandle {
     API::ObjectStorage<API::FrameHandle> _frameHandle;
 }
@@ -105,5 +101,3 @@ using namespace WebKit;
 }
 
 @end
-
-#endif // WK_API_ENABLED

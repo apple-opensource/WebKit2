@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #if PLATFORM(MAC)
 
 #import "ArgumentCodersCF.h"
+#import "ArgumentCodersCocoa.h"
 #import "Decoder.h"
 #import "Encoder.h"
 #import "WebCoreArgumentCoders.h"
@@ -45,20 +46,7 @@ void WebHitTestResultData::platformEncode(IPC::Encoder& encoder) const
     if (!hasActionContext)
         return;
 
-#if (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
-    auto data = adoptNS([[NSMutableData alloc] init]);
-    auto archiver = adoptNS([[NSKeyedArchiver alloc] initForWritingWithMutableData:data.get()]);
-    [archiver setRequiresSecureCoding:YES];
-    [archiver encodeObject:detectedDataActionContext.get() forKey:@"actionContext"];
-    [archiver finishEncoding];
-
-    IPC::encode(encoder, reinterpret_cast<CFDataRef>(data.get()));
-#else
-    auto archiver = secureArchiver();
-    [archiver encodeObject:detectedDataActionContext.get() forKey:@"actionContext"];
-
-    IPC::encode(encoder, reinterpret_cast<CFDataRef>(archiver.get().encodedData));
-#endif
+    encoder << detectedDataActionContext;
 
     encoder << detectedDataBoundingBox;
     encoder << detectedDataOriginatingPageOverlay;
@@ -79,19 +67,11 @@ bool WebHitTestResultData::platformDecode(IPC::Decoder& decoder, WebHitTestResul
         return true;
     ASSERT(DataDetectorsLibrary());
 
-    RetainPtr<CFDataRef> data;
-    if (!IPC::decode(decoder, data))
+    auto detectedDataActionContext = IPC::decode<DDActionContext>(decoder, getDDActionContextClass());
+    if (!detectedDataActionContext)
         return false;
 
-    auto unarchiver = secureUnarchiverFromData((NSData *)data.get());
-    @try {
-        hitTestResultData.detectedDataActionContext = [unarchiver decodeObjectOfClass:getDDActionContextClass() forKey:@"actionContext"];
-    } @catch (NSException *exception) {
-        LOG_ERROR("Failed to decode DDActionContext: %@", exception);
-        return false;
-    }
-    
-    [unarchiver finishDecoding];
+    hitTestResultData.detectedDataActionContext = WTFMove(*detectedDataActionContext);
 
     if (!decoder.decode(hitTestResultData.detectedDataBoundingBox))
         return false;
@@ -104,7 +84,7 @@ bool WebHitTestResultData::platformDecode(IPC::Decoder& decoder, WebHitTestResul
         return false;
 
     if (hasDetectedDataTextIndicator) {
-        std::optional<WebCore::TextIndicatorData> indicatorData;
+        Optional<WebCore::TextIndicatorData> indicatorData;
         decoder >> indicatorData;
         if (!indicatorData)
             return false;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,21 +36,17 @@
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace IPC {
-    class MachPort;
-    class Connection;
-    class DummyType;
-}
-
-namespace WTF {
-    class String;
+class MachPort;
+class DummyType;
 }
 
 namespace WebKit {
-    class WebTouchEvent;
-    class WebPreferencesStore;
+class WebTouchEvent;
+class WebPreferencesStore;
 }
 
 namespace Messages {
@@ -292,7 +288,8 @@ public:
     static IPC::StringReference name() { return IPC::StringReference("CreatePlugin"); }
     static const bool isSync = true;
 
-    typedef std::tuple<bool&> Reply;
+    using Reply = std::tuple<bool&>;
+    using ReplyArguments = std::tuple<bool>;
     CreatePlugin(uint64_t pluginInstanceID, const WebKit::Plugin::Parameters& parameters)
         : m_arguments(pluginInstanceID, parameters)
     {
@@ -315,7 +312,8 @@ public:
     static IPC::StringReference name() { return IPC::StringReference("RunJavaScriptAlert"); }
     static const bool isSync = true;
 
-    typedef std::tuple<> Reply;
+    using Reply = std::tuple<>;
+    using ReplyArguments = std::tuple<>;
     RunJavaScriptAlert(uint64_t frameID, const String& message)
         : m_arguments(frameID, message)
     {
@@ -338,7 +336,8 @@ public:
     static IPC::StringReference name() { return IPC::StringReference("GetPlugins"); }
     static const bool isSync = true;
 
-    typedef std::tuple<Vector<WebCore::PluginInfo>&> Reply;
+    using Reply = std::tuple<Vector<WebCore::PluginInfo>&>;
+    using ReplyArguments = std::tuple<Vector<WebCore::PluginInfo>>;
     explicit GetPlugins(bool refresh)
         : m_arguments(refresh)
     {
@@ -361,18 +360,10 @@ public:
     static IPC::StringReference name() { return IPC::StringReference("GetPluginProcessConnection"); }
     static const bool isSync = true;
 
-    struct DelayedReply : public ThreadSafeRefCounted<DelayedReply> {
-        DelayedReply(Ref<IPC::Connection>&&, std::unique_ptr<IPC::Encoder>);
-        ~DelayedReply();
-
-        bool send(const IPC::Connection::Handle& connectionHandle);
-
-    private:
-        RefPtr<IPC::Connection> m_connection;
-        std::unique_ptr<IPC::Encoder> m_encoder;
-    };
-
-    typedef std::tuple<IPC::Connection::Handle&> Reply;
+    using DelayedReply = CompletionHandler<void(const IPC::Connection::Handle& connectionHandle)>;
+    static void send(std::unique_ptr<IPC::Encoder>&&, IPC::Connection&, const IPC::Connection::Handle& connectionHandle);
+    using Reply = std::tuple<IPC::Connection::Handle&>;
+    using ReplyArguments = std::tuple<IPC::Connection::Handle>;
     explicit GetPluginProcessConnection(const String& pluginPath)
         : m_arguments(pluginPath)
     {
@@ -395,18 +386,10 @@ public:
     static IPC::StringReference name() { return IPC::StringReference("TestMultipleAttributes"); }
     static const bool isSync = true;
 
-    struct DelayedReply : public ThreadSafeRefCounted<DelayedReply> {
-        DelayedReply(Ref<IPC::Connection>&&, std::unique_ptr<IPC::Encoder>);
-        ~DelayedReply();
-
-        bool send();
-
-    private:
-        RefPtr<IPC::Connection> m_connection;
-        std::unique_ptr<IPC::Encoder> m_encoder;
-    };
-
-    typedef std::tuple<> Reply;
+    using DelayedReply = CompletionHandler<void()>;
+    static void send(std::unique_ptr<IPC::Encoder>&&, IPC::Connection&);
+    using Reply = std::tuple<>;
+    using ReplyArguments = std::tuple<>;
     const Arguments& arguments() const
     {
         return m_arguments;
@@ -515,7 +498,8 @@ public:
     static IPC::StringReference name() { return IPC::StringReference("InterpretKeyEvent"); }
     static const bool isSync = true;
 
-    typedef std::tuple<Vector<WebCore::KeypressCommand>&> Reply;
+    using Reply = std::tuple<Vector<WebCore::KeypressCommand>&>;
+    using ReplyArguments = std::tuple<Vector<WebCore::KeypressCommand>>;
     explicit InterpretKeyEvent(uint32_t type)
         : m_arguments(type)
     {

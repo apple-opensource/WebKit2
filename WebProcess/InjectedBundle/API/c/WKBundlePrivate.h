@@ -48,10 +48,8 @@ WK_EXPORT void WKBundleSetAllowFileAccessFromFileURLs(WKBundleRef bundle, WKBund
 WK_EXPORT void WKBundleSetAllowStorageAccessFromFileURLS(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool needsQuirk);
 WK_EXPORT void WKBundleSetMinimumLogicalFontSize(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, int size);
 WK_EXPORT void WKBundleSetFrameFlatteningEnabled(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
-WK_EXPORT void WKBundleSetAsyncFrameScrollingEnabled(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
 WK_EXPORT void WKBundleSetJavaScriptCanAccessClipboard(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
 WK_EXPORT void WKBundleSetPrivateBrowsingEnabled(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
-WK_EXPORT void WKBundleSetUseDashboardCompatibilityMode(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
 WK_EXPORT void WKBundleSetPopupBlockingEnabled(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
 WK_EXPORT void WKBundleSetAuthorAndUserStylesEnabled(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
 WK_EXPORT void WKBundleSetSpatialNavigationEnabled(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool enabled);
@@ -68,6 +66,8 @@ WK_EXPORT void WKBundleRemoveAllWebNotificationPermissions(WKBundleRef bundle, W
 WK_EXPORT uint64_t WKBundleGetWebNotificationID(WKBundleRef bundle, JSContextRef context, JSValueRef notification);
 WK_EXPORT WKDataRef WKBundleCreateWKDataFromUInt8Array(WKBundleRef bundle, JSContextRef context, JSValueRef data);
 WK_EXPORT void WKBundleSetAsynchronousSpellCheckingEnabled(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, bool enabled);
+// Returns array of dictionaries. Dictionary keys are document identifiers, values are document URLs.
+WK_EXPORT WKArrayRef WKBundleGetLiveDocumentURLs(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, bool excludeDocumentsInPageGroupPages);
 
 // UserContent API
 WK_EXPORT void WKBundleAddUserScript(WKBundleRef bundle, WKBundlePageGroupRef pageGroup, WKBundleScriptWorldRef scriptWorld, WKStringRef source, WKURLRef url, WKArrayRef whitelist, WKArrayRef blacklist, _WKUserScriptInjectionTime injectionTime, WKUserContentInjectedFrames injectedFrames);
@@ -93,6 +93,10 @@ WK_EXPORT void WKBundleSetTabKeyCyclesThroughElements(WKBundleRef bundle, WKBund
 
 WK_EXPORT void WKBundleClearResourceLoadStatistics(WKBundleRef);
 WK_EXPORT void WKBundleResourceLoadStatisticsNotifyObserver(WKBundleRef);
+
+WK_EXPORT void WKBundleExtendClassesForParameterCoder(WKBundleRef bundle, WKArrayRef classes);
+
+WK_EXPORT void WKBundleReleaseMemory(WKBundleRef);
 
 #ifdef __cplusplus
 }

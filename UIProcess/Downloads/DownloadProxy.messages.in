@@ -21,17 +21,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 messages -> DownloadProxy {
-    DidStart(WebCore::ResourceRequest request, AtomicString suggestedFilename)
+    DidStart(WebCore::ResourceRequest request, AtomString suggestedFilename)
     DidReceiveAuthenticationChallenge(WebCore::AuthenticationChallenge challenge, uint64_t challengeID)
     WillSendRequest(WebCore::ResourceRequest redirectRequest, WebCore::ResourceResponse redirectResponse))
     DecideDestinationWithSuggestedFilenameAsync(WebKit::DownloadID downloadID, String suggestedFilename)
 
     DidReceiveResponse(WebCore::ResourceResponse response)
     DidReceiveData(uint64_t length)
-#if !USE(NETWORK_SESSION)
-    ShouldDecodeSourceDataOfMIMEType(String mimeType) -> (bool result)
-    DecideDestinationWithSuggestedFilename(String filename, String mimeType) -> (String destination, bool allowOverwrite, WebKit::SandboxExtension::Handle sandboxExtensionHandle) Delayed
-#endif
     DidCreateDestination(String path)
     DidFinish()
     DidFail(WebCore::ResourceError error, IPC::DataReference resumeData)

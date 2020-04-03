@@ -37,6 +37,10 @@
 typedef struct _GModule GModule;
 #endif
 
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
+
 namespace WebKit {
 
 class Module {
@@ -56,22 +60,15 @@ public:
 
     template<typename FunctionType> FunctionType functionPointer(const char* functionName) const;
 
-#if USE(CF) && !defined(__LP64__)
-    CFBundleRefNum bundleResourceMap();
-#endif
-
 private:
     void* platformFunctionPointer(const char* functionName) const;
 
     String m_path;
-#if PLATFORM(WIN)
+#if OS(WINDOWS)
     HMODULE m_module;
 #endif
 #if USE(CF)
     RetainPtr<CFBundleRef> m_bundle;
-#if !defined(__LP64__)
-    CFBundleRefNum m_bundleResourceMap;
-#endif
 #elif USE(GLIB)
     GModule* m_handle;
 #endif

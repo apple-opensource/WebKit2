@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,18 +25,14 @@
 
 #import "_WKVisitedLinkStore.h"
 
-#if WK_API_ENABLED
-
 #import "VisitedLinkStore.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline _WKVisitedLinkStore *wrapper(VisitedLinkStore& visitedLinkStore)
-{
-    ASSERT([visitedLinkStore.wrapper() isKindOfClass:[_WKVisitedLinkStore class]]);
-    return (_WKVisitedLinkStore *)visitedLinkStore.wrapper();
-}
+template<> struct WrapperTraits<VisitedLinkStore> {
+    using WrapperClass = _WKVisitedLinkStore;
+};
 
 }
 
@@ -46,6 +42,3 @@ inline _WKVisitedLinkStore *wrapper(VisitedLinkStore& visitedLinkStore)
 }
 
 @end
-
-#endif
-

@@ -27,24 +27,19 @@
 #include "config.h"
 #include "ProcessLauncher.h"
 
+#include "BubblewrapLauncher.h"
 #include "Connection.h"
 #include "ProcessExecutablePath.h"
-#include <WebCore/FileSystem.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <glib.h>
+#include <wtf/FileSystem.h>
 #include <wtf/RunLoop.h>
 #include <wtf/UniStdExtras.h>
 #include <wtf/glib/GLibUtilities.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
-
-#if PLATFORM(WPE)
-#include <wpe/renderer-host.h>
-#endif
-
-using namespace WebCore;
 
 namespace WebKit {
 
@@ -54,10 +49,20 @@ static void childSetupFunction(gpointer userData)
     close(socket);
 }
 
+#if ENABLE(BUBBLEWRAP_SANDBOX)
+static bool isInsideFlatpak()
+{
+    static int ret = -1;
+    if (ret != -1)
+        return ret;
+
+    ret = g_file_test("/.flatpak-info", G_FILE_TEST_EXISTS);
+    return ret;
+}
+#endif
+
 void ProcessLauncher::launchProcess()
 {
-    GPid pid = 0;
-
     IPC::Connection::SocketPair socketPair = IPC::Connection::createPlatformConnection(IPC::Connection::ConnectionOptions::SetCloexecOnServer);
 
     String executablePath;
@@ -74,19 +79,12 @@ void ProcessLauncher::launchProcess()
     case ProcessLauncher::ProcessType::Plugin64:
     case ProcessLauncher::ProcessType::Plugin32:
         executablePath = executablePathOfPluginProcess();
-#if ENABLE(PLUGIN_PROCESS_GTK2)
-        if (m_launchOptions.extraInitializationData.contains("requires-gtk2"))
-            executablePath.append('2');
-#endif
         pluginPath = m_launchOptions.extraInitializationData.get("plugin-path");
         realPluginPath = FileSystem::fileSystemRepresentation(pluginPath);
         break;
 #endif
     case ProcessLauncher::ProcessType::Network:
         executablePath = executablePathOfNetworkProcess();
-        break;
-    case ProcessLauncher::ProcessType::Storage:
-        executablePath = executablePathOfStorageProcess();
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -98,20 +96,10 @@ void ProcessLauncher::launchProcess()
     GUniquePtr<gchar> webkitSocket(g_strdup_printf("%d", socketPair.client));
     unsigned nargs = 5; // size of the argv array for g_spawn_async()
 
-#if PLATFORM(WPE)
-    GUniquePtr<gchar> wpeSocket;
-    if (m_launchOptions.processType == ProcessLauncher::ProcessType::Web) {
-        wpeSocket = GUniquePtr<gchar>(g_strdup_printf("%d", wpe_renderer_host_create_client()));
-        nargs++;
-    }
-#endif
-
 #if ENABLE(DEVELOPER_MODE)
     Vector<CString> prefixArgs;
     if (!m_launchOptions.processCmdPrefix.isNull()) {
-        Vector<String> splitArgs;
-        m_launchOptions.processCmdPrefix.split(' ', splitArgs);
-        for (auto& arg : splitArgs)
+        for (auto& arg : m_launchOptions.processCmdPrefix.split(' '))
             prefixArgs.append(arg.utf8());
         nargs += prefixArgs.size();
     }
@@ -127,10 +115,6 @@ void ProcessLauncher::launchProcess()
     argv[i++] = const_cast<char*>(realExecutablePath.data());
     argv[i++] = processIdentifier.get();
     argv[i++] = webkitSocket.get();
-#if PLATFORM(WPE)
-    if (m_launchOptions.processType == ProcessLauncher::ProcessType::Web)
-        argv[i++] = wpeSocket.get();
-#endif
 #if ENABLE(NETSCAPE_PLUGIN_API)
     argv[i++] = const_cast<char*>(realPluginPath.data());
 #else
@@ -138,16 +122,37 @@ void ProcessLauncher::launchProcess()
 #endif
     argv[i++] = nullptr;
 
+    GRefPtr<GSubprocessLauncher> launcher = adoptGRef(g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_INHERIT_FDS));
+    g_subprocess_launcher_set_child_setup(launcher.get(), childSetupFunction, GINT_TO_POINTER(socketPair.server), nullptr);
+    g_subprocess_launcher_take_fd(launcher.get(), socketPair.client, socketPair.client);
+
     GUniqueOutPtr<GError> error;
-    if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_LEAVE_DESCRIPTORS_OPEN, childSetupFunction, GINT_TO_POINTER(socketPair.server), &pid, &error.outPtr()))
+    GRefPtr<GSubprocess> process;
+
+#if ENABLE(BUBBLEWRAP_SANDBOX)
+    const char* sandboxEnv = g_getenv("WEBKIT_FORCE_SANDBOX");
+    bool sandboxEnabled = m_launchOptions.extraInitializationData.get("enable-sandbox") == "true";
+
+    if (sandboxEnv)
+        sandboxEnabled = !strcmp(sandboxEnv, "1");
+
+    // You cannot use bubblewrap within Flatpak so lets ensure it never happens.
+    if (sandboxEnabled && !isInsideFlatpak())
+        process = bubblewrapSpawn(launcher.get(), m_launchOptions, argv, &error.outPtr());
+    else
+#endif
+        process = adoptGRef(g_subprocess_launcher_spawnv(launcher.get(), argv, &error.outPtr()));
+
+    if (!process.get())
         g_error("Unable to fork a new child process: %s", error->message);
+
+    const char* processIdStr = g_subprocess_get_identifier(process.get());
+    m_processIdentifier = g_ascii_strtoll(processIdStr, nullptr, 0);
+    RELEASE_ASSERT(m_processIdentifier);
 
     // Don't expose the parent socket to potential future children.
     if (!setCloseOnExec(socketPair.client))
         RELEASE_ASSERT_NOT_REACHED();
-
-    close(socketPair.client);
-    m_processIdentifier = pid;
 
     // We've finished launching the process, message back to the main run loop.
     RunLoop::main().dispatch([protectedThis = makeRef(*this), this, serverSocket = socketPair.server] {

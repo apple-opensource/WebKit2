@@ -26,8 +26,6 @@
 #import "config.h"
 #import "_WKExperimentalFeatureInternal.h"
 
-#if WK_API_ENABLED
-
 @implementation _WKExperimentalFeature
 
 - (void)dealloc
@@ -62,6 +60,11 @@
     return _experimentalFeature->defaultValue();
 }
 
+- (BOOL)isHidden
+{
+    return _experimentalFeature->isHidden();
+}
+
 #pragma mark WKObject protocol implementation
 
 - (API::Object&)_apiObject
@@ -70,5 +73,3 @@
 }
 
 @end
-
-#endif

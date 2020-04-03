@@ -26,42 +26,56 @@
 #import "config.h"
 #import "PageClientImplCocoa.h"
 
+#import "WKWebViewConfigurationPrivate.h"
 #import "WKWebViewInternal.h"
 
 namespace WebKit {
 
 void PageClientImplCocoa::isPlayingAudioWillChange()
 {
-#if WK_API_ENABLED
     [m_webView willChangeValueForKey:NSStringFromSelector(@selector(_isPlayingAudio))];
-#endif
 }
 
 void PageClientImplCocoa::isPlayingAudioDidChange()
 {
-#if WK_API_ENABLED
     [m_webView didChangeValueForKey:NSStringFromSelector(@selector(_isPlayingAudio))];
-#endif
+}
+
+bool PageClientImplCocoa::scrollingUpdatesDisabledForTesting()
+{
+    return [m_webView _scrollingUpdatesDisabledForTesting];
 }
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
-void PageClientImplCocoa::didInsertAttachment(const String& identifier)
+void PageClientImplCocoa::didInsertAttachment(API::Attachment& attachment, const String& source)
 {
-#if WK_API_ENABLED
-    [m_webView _didInsertAttachment:identifier];
-#else
-    UNUSED_PARAM(identifier);
-#endif
+    [m_webView _didInsertAttachment:attachment withSource:source];
 }
 
-void PageClientImplCocoa::didRemoveAttachment(const String& identifier)
+void PageClientImplCocoa::didRemoveAttachment(API::Attachment& attachment)
 {
-#if WK_API_ENABLED
-    [m_webView _didRemoveAttachment:identifier];
-#else
-    UNUSED_PARAM(identifier);
-#endif
+    [m_webView _didRemoveAttachment:attachment];
+}
+
+void PageClientImplCocoa::didInvalidateDataForAttachment(API::Attachment& attachment)
+{
+    [m_webView _didInvalidateDataForAttachment:attachment];
+}
+
+NSFileWrapper *PageClientImplCocoa::allocFileWrapperInstance() const
+{
+    Class cls = [m_webView configuration]._attachmentFileWrapperClass ?: [NSFileWrapper self];
+    return [cls alloc];
+}
+
+NSSet *PageClientImplCocoa::serializableFileWrapperClasses() const
+{
+    Class defaultFileWrapperClass = NSFileWrapper.self;
+    Class configuredFileWrapperClass = [m_webView configuration]._attachmentFileWrapperClass;
+    if (configuredFileWrapperClass && configuredFileWrapperClass != defaultFileWrapperClass)
+        return [NSSet setWithObjects:configuredFileWrapperClass, defaultFileWrapperClass, nil];
+    return [NSSet setWithObjects:defaultFileWrapperClass, nil];
 }
 
 #endif

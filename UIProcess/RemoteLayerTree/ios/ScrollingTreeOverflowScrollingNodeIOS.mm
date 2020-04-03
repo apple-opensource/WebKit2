@@ -26,16 +26,15 @@
 #import "config.h"
 #import "ScrollingTreeOverflowScrollingNodeIOS.h"
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #if ENABLE(ASYNC_SCROLLING)
 
 #import "ScrollingTreeScrollingNodeDelegateIOS.h"
 
 #import <WebCore/ScrollingStateOverflowScrollingNode.h>
 
-using namespace WebCore;
-
 namespace WebKit {
+using namespace WebCore;
 
 Ref<ScrollingTreeOverflowScrollingNodeIOS> ScrollingTreeOverflowScrollingNodeIOS::create(WebCore::ScrollingTree& scrollingTree, WebCore::ScrollingNodeID nodeID)
 {
@@ -52,9 +51,14 @@ ScrollingTreeOverflowScrollingNodeIOS::~ScrollingTreeOverflowScrollingNodeIOS()
 {
 }
 
+UIScrollView* ScrollingTreeOverflowScrollingNodeIOS::scrollView() const
+{
+    return m_scrollingNodeDelegate->scrollView();
+}
+
 void ScrollingTreeOverflowScrollingNodeIOS::commitStateBeforeChildren(const WebCore::ScrollingStateNode& stateNode)
 {
-    if (stateNode.hasChangedProperty(ScrollingStateScrollingNode::ScrollLayer))
+    if (stateNode.hasChangedProperty(ScrollingStateScrollingNode::ScrollContainerLayer))
         m_scrollingNodeDelegate->resetScrollViewDelegate();
 
     ScrollingTreeOverflowScrollingNode::commitStateBeforeChildren(stateNode);
@@ -64,30 +68,17 @@ void ScrollingTreeOverflowScrollingNodeIOS::commitStateBeforeChildren(const WebC
 void ScrollingTreeOverflowScrollingNodeIOS::commitStateAfterChildren(const ScrollingStateNode& stateNode)
 {
     ScrollingTreeOverflowScrollingNode::commitStateAfterChildren(stateNode);
-    m_scrollingNodeDelegate->commitStateAfterChildren(downcast<ScrollingStateScrollingNode>(stateNode));
+
+    const auto& scrollingStateNode = downcast<ScrollingStateScrollingNode>(stateNode);
+    m_scrollingNodeDelegate->commitStateAfterChildren(scrollingStateNode);
 }
 
-void ScrollingTreeOverflowScrollingNodeIOS::updateLayersAfterAncestorChange(const ScrollingTreeNode& changedNode, const FloatRect& fixedPositionRect, const FloatSize& cumulativeDelta)
+void ScrollingTreeOverflowScrollingNodeIOS::repositionScrollingLayers()
 {
-    m_scrollingNodeDelegate->updateLayersAfterAncestorChange(changedNode, fixedPositionRect, cumulativeDelta);
-}
-
-FloatPoint ScrollingTreeOverflowScrollingNodeIOS::scrollPosition() const
-{
-    return m_scrollingNodeDelegate->scrollPosition();
-}
-
-void ScrollingTreeOverflowScrollingNodeIOS::setScrollLayerPosition(const FloatPoint& scrollPosition, const FloatRect&)
-{
-    m_scrollingNodeDelegate->setScrollLayerPosition(scrollPosition);
-}
-
-void ScrollingTreeOverflowScrollingNodeIOS::updateLayersAfterDelegatedScroll(const FloatPoint& scrollPosition)
-{
-    m_scrollingNodeDelegate->updateChildNodesAfterScroll(scrollPosition);
+    m_scrollingNodeDelegate->repositionScrollingLayers();
 }
 
 } // namespace WebKit
 
 #endif // ENABLE(ASYNC_SCROLLING)
-#endif // PLATFORM(IOS)
+#endif // PLATFORM(IOS_FAMILY)

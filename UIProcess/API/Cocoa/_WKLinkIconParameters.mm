@@ -26,8 +26,6 @@
 #import "config.h"
 #import "_WKLinkIconParametersInternal.h"
 
-#if WK_API_ENABLED
-
 #import <WebCore/LinkIcon.h>
 
 @implementation _WKLinkIconParameters {
@@ -35,6 +33,7 @@
     WKLinkIconType _iconType;
     RetainPtr<NSString> _mimeType;
     RetainPtr<NSNumber> _size;
+    RetainPtr<NSMutableDictionary> _attributes;
 }
 
 - (instancetype)_initWithLinkIcon:(const WebCore::LinkIcon&)linkIcon
@@ -42,8 +41,8 @@
     if (!(self = [super init]))
         return nil;
 
-    _url = adoptNS([(NSURL *)linkIcon.url copy]);
-    _mimeType = adoptNS([(NSString *)linkIcon.mimeType copy]);
+    _url = (NSURL *)linkIcon.url;
+    _mimeType = (NSString *)linkIcon.mimeType;
 
     if (linkIcon.size)
         _size = adoptNS([[NSNumber alloc] initWithUnsignedInt:linkIcon.size.value()]);
@@ -59,6 +58,10 @@
         _iconType = WKLinkIconTypeTouchPrecomposedIcon;
         break;
     }
+
+    _attributes = adoptNS([[NSMutableDictionary alloc] initWithCapacity:linkIcon.attributes.size()]);
+    for (auto& attributePair : linkIcon.attributes)
+        _attributes.get()[(NSString *)attributePair.first] = attributePair.second;
 
     return self;
 }
@@ -83,6 +86,9 @@
     return _iconType;
 }
 
-@end
+- (NSDictionary *)attributes
+{
+    return _attributes.get();
+}
 
-#endif // WK_API_ENABLED
+@end

@@ -28,6 +28,7 @@
 #include "Connection.h"
 #include "MessageSender.h"
 #include "ShareableResource.h"
+#include <WebCore/PageIdentifier.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 
@@ -50,7 +51,7 @@ typedef uint64_t ResourceLoadIdentifier;
 class WebResourceLoader : public RefCounted<WebResourceLoader>, public IPC::MessageSender {
 public:
     struct TrackingParameters {
-        uint64_t pageID { 0 };
+        WebCore::PageIdentifier pageID;
         uint64_t frameID { 0 };
         ResourceLoadIdentifier resourceID { 0 };
     };
@@ -71,8 +72,8 @@ private:
     WebResourceLoader(Ref<WebCore::ResourceLoader>&&, const TrackingParameters&);
 
     // IPC::MessageSender
-    IPC::Connection* messageSenderConnection() override;
-    uint64_t messageSenderDestinationID() override;
+    IPC::Connection* messageSenderConnection() const override;
+    uint64_t messageSenderDestinationID() const override;
 
     void willSendRequest(WebCore::ResourceRequest&&, WebCore::ResourceResponse&&);
     void didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent);
@@ -82,6 +83,9 @@ private:
     void didFinishResourceLoad(const WebCore::NetworkLoadMetrics&);
     void didFailResourceLoad(const WebCore::ResourceError&);
     void didBlockAuthenticationChallenge();
+
+    void stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(const WebCore::ResourceResponse&);
+
 #if ENABLE(SHAREABLE_RESOURCE)
     void didReceiveResource(const ShareableResource::Handle&);
 #endif
@@ -89,6 +93,10 @@ private:
     RefPtr<WebCore::ResourceLoader> m_coreLoader;
     TrackingParameters m_trackingParameters;
     size_t m_numBytesReceived { 0 };
+
+#if !ASSERT_DISABLED
+    bool m_isProcessingNetworkResponse { false };
+#endif
 };
 
 } // namespace WebKit

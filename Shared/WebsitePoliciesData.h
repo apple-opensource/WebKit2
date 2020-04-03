@@ -28,7 +28,13 @@
 #include "WebsiteAutoplayPolicy.h"
 #include "WebsiteAutoplayQuirk.h"
 #include "WebsiteDataStoreParameters.h"
-#include <WebCore/HTTPHeaderField.h>
+#include "WebsiteLegacyOverflowScrollingTouchPolicy.h"
+#include "WebsiteMediaSourcePolicy.h"
+#include "WebsiteMetaViewportPolicy.h"
+#include "WebsitePopUpPolicy.h"
+#include "WebsiteSimulatedMouseEventsDispatchPolicy.h"
+#include <WebCore/CustomHeaderFields.h>
+#include <WebCore/DeviceOrientationOrMotionPermissionState.h>
 #include <wtf/OptionSet.h>
 
 namespace IPC {
@@ -48,11 +54,23 @@ struct WebsitePoliciesData {
     bool contentBlockersEnabled { true };
     OptionSet<WebsiteAutoplayQuirk> allowedAutoplayQuirks;
     WebsiteAutoplayPolicy autoplayPolicy { WebsiteAutoplayPolicy::Default };
-    Vector<WebCore::HTTPHeaderField> customHeaderFields;
-    std::optional<WebsiteDataStoreParameters> websiteDataStoreParameters;
-    
+#if ENABLE(DEVICE_ORIENTATION)
+    WebCore::DeviceOrientationOrMotionPermissionState deviceOrientationAndMotionAccessState;
+#endif
+    Vector<WebCore::CustomHeaderFields> customHeaderFields;
+    WebsitePopUpPolicy popUpPolicy { WebsitePopUpPolicy::Default };
+    Optional<WebsiteDataStoreParameters> websiteDataStoreParameters;
+    String customUserAgent;
+    String customJavaScriptUserAgentAsSiteSpecificQuirks;
+    String customNavigatorPlatform;
+    WebsiteMetaViewportPolicy metaViewportPolicy { WebsiteMetaViewportPolicy::Default };
+    WebsiteMediaSourcePolicy mediaSourcePolicy { WebsiteMediaSourcePolicy::Default };
+    WebsiteSimulatedMouseEventsDispatchPolicy simulatedMouseEventsDispatchPolicy { WebsiteSimulatedMouseEventsDispatchPolicy::Default };
+    WebsiteLegacyOverflowScrollingTouchPolicy legacyOverflowScrollingTouchPolicy { WebsiteLegacyOverflowScrollingTouchPolicy::Default };
+    bool allowContentChangeObserverQuirk { false };
+
     void encode(IPC::Encoder&) const;
-    static std::optional<WebsitePoliciesData> decode(IPC::Decoder&);
+    static Optional<WebsitePoliciesData> decode(IPC::Decoder&);
 };
 
 } // namespace WebKit

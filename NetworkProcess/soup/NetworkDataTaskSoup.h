@@ -46,7 +46,6 @@ public:
 private:
     NetworkDataTaskSoup(NetworkSession&, NetworkDataTaskClient&, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, WebCore::ContentSniffingPolicy, WebCore::ContentEncodingSniffingPolicy, bool shouldClearReferrerOnHTTPSToHTTPRedirect, bool dataTaskIsForMainFrameNavigation);
 
-    void suspend() override;
     void cancel() override;
     void resume() override;
     void invalidateAndCancel() override;
@@ -66,8 +65,8 @@ private:
     void dispatchDidReceiveResponse();
     void dispatchDidCompleteWithError(const WebCore::ResourceError&);
 
-    static void tlsErrorsChangedCallback(SoupMessage*, GParamSpec*, NetworkDataTaskSoup*);
-    void tlsErrorsChanged();
+    static gboolean tlsConnectionAcceptCertificateCallback(GTlsConnection*, GTlsCertificate*, GTlsCertificateFlags, NetworkDataTaskSoup*);
+    bool tlsConnectionAcceptCertificate(GTlsCertificate*, GTlsCertificateFlags);
 
     void applyAuthenticationToRequest(WebCore::ResourceRequest&);
     static void authenticateCallback(SoupSession*, SoupMessage*, SoupAuth*, gboolean retrying, NetworkDataTaskSoup*);
@@ -107,7 +106,7 @@ private:
     void didFail(const WebCore::ResourceError&);
 
     static void networkEventCallback(SoupMessage*, GSocketClientEvent, GIOStream*, NetworkDataTaskSoup*);
-    void networkEvent(GSocketClientEvent);
+    void networkEvent(GSocketClientEvent, GIOStream*);
 #if SOUP_CHECK_VERSION(2, 49, 91)
     static void startingCallback(SoupMessage*, NetworkDataTaskSoup*);
 #else

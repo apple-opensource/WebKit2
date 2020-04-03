@@ -1,5 +1,5 @@
  /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,11 +40,9 @@
 #import <WebCore/WebLayer.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
 #import <mach/mach_port.h>
 #endif
-
-using namespace WebCore;
 
 namespace WebKit {
 
@@ -70,9 +68,9 @@ RemoteLayerBackingStore::~RemoteLayerBackingStore()
         context->backingStoreWillBeDestroyed(*this);
 }
 
-void RemoteLayerBackingStore::ensureBackingStore(FloatSize size, float scale, bool acceleratesDrawing, bool deepColor, bool isOpaque)
+void RemoteLayerBackingStore::ensureBackingStore(WebCore::FloatSize size, float scale, bool acceleratesDrawing, bool deepColor, bool isOpaque)
 {
-#if !USE(IOSURFACE)
+#if !HAVE(IOSURFACE)
     acceleratesDrawing = false;
 #endif
     if (m_size == size && m_scale == scale && m_deepColor == deepColor && m_acceleratesDrawing == acceleratesDrawing && m_isOpaque == isOpaque)
@@ -97,7 +95,7 @@ void RemoteLayerBackingStore::clearBackingStore()
 {
     m_frontBuffer.discard();
     m_backBuffer.discard();
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     m_secondaryBackBuffer.discard();
 #endif
 }
@@ -109,12 +107,12 @@ void RemoteLayerBackingStore::encode(IPC::Encoder& encoder) const
     encoder << m_acceleratesDrawing;
     encoder << m_isOpaque;
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     if (m_acceleratesDrawing) {
         if (m_frontBuffer.surface)
             encoder << m_frontBuffer.surface->createSendRight();
         else
-            encoder << WebCore::MachSendRight();
+            encoder << WTF::MachSendRight();
         return;
     }
 #endif
@@ -140,7 +138,7 @@ bool RemoteLayerBackingStore::decode(IPC::Decoder& decoder, RemoteLayerBackingSt
     if (!decoder.decode(result.m_isOpaque))
         return false;
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     if (result.m_acceleratesDrawing) {
         MachSendRight sendRight;
         if (!decoder.decode(sendRight))
@@ -160,31 +158,33 @@ bool RemoteLayerBackingStore::decode(IPC::Decoder& decoder, RemoteLayerBackingSt
     return true;
 }
 
-void RemoteLayerBackingStore::setNeedsDisplay(const IntRect rect)
+void RemoteLayerBackingStore::setNeedsDisplay(const WebCore::IntRect rect)
 {
     m_dirtyRegion.unite(rect);
 }
 
 void RemoteLayerBackingStore::setNeedsDisplay()
 {
-    setNeedsDisplay(IntRect(IntPoint(), expandedIntSize(m_size)));
+    setNeedsDisplay(WebCore::IntRect(WebCore::IntPoint(), WebCore::expandedIntSize(m_size)));
 }
 
-IntSize RemoteLayerBackingStore::backingStoreSize() const
+WebCore::IntSize RemoteLayerBackingStore::backingStoreSize() const
 {
-    FloatSize scaledSize = m_size;
+    WebCore::FloatSize scaledSize = m_size;
     scaledSize.scale(m_scale);
     return roundedIntSize(scaledSize);
 }
 
 unsigned RemoteLayerBackingStore::bytesPerPixel() const
 {
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     switch (surfaceBufferFormat()) {
     case WebCore::IOSurface::Format::RGBA: return 4;
     case WebCore::IOSurface::Format::YUV422: return 2;
+#if HAVE(IOSURFACE_RGB10)
     case WebCore::IOSurface::Format::RGB10: return 4;
     case WebCore::IOSurface::Format::RGB10A8: return 5;
+#endif
     }
 #endif
     return 4;
@@ -192,9 +192,9 @@ unsigned RemoteLayerBackingStore::bytesPerPixel() const
 
 void RemoteLayerBackingStore::swapToValidFrontBuffer()
 {
-    IntSize expandedScaledSize = backingStoreSize();
+    WebCore::IntSize expandedScaledSize = backingStoreSize();
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     if (m_acceleratesDrawing) {
         if (!m_backBuffer.surface || m_backBuffer.surface->isInUse()) {
             std::swap(m_backBuffer, m_secondaryBackBuffer);
@@ -205,7 +205,7 @@ void RemoteLayerBackingStore::swapToValidFrontBuffer()
         std::swap(m_frontBuffer, m_backBuffer);
 
         if (!m_frontBuffer.surface)
-            m_frontBuffer.surface = WebCore::IOSurface::create(expandedScaledSize, sRGBColorSpaceRef(), surfaceBufferFormat());
+            m_frontBuffer.surface = WebCore::IOSurface::create(expandedScaledSize, WebCore::sRGBColorSpaceRef(), surfaceBufferFormat());
 
         setBufferVolatility(BufferType::Front, false);
         return;
@@ -235,35 +235,35 @@ bool RemoteLayerBackingStore::display()
     // Make the previous front buffer non-volatile early, so that we can dirty the whole layer if it comes back empty.
     setBufferVolatility(BufferType::Front, false);
 
-    IntSize expandedScaledSize = backingStoreSize();
+    WebCore::IntSize expandedScaledSize = backingStoreSize();
 
     if (m_dirtyRegion.isEmpty() || expandedScaledSize.isEmpty())
         return needToEncodeBackingStore;
 
-    IntRect layerBounds(IntPoint(), expandedIntSize(m_size));
+    WebCore::IntRect layerBounds(WebCore::IntPoint(), WebCore::expandedIntSize(m_size));
     if (!hasFrontBuffer())
         m_dirtyRegion.unite(layerBounds);
 
     if (m_layer->owner()->platformCALayerShowRepaintCounter(m_layer)) {
-        IntRect indicatorRect(0, 0, 52, 27);
+        WebCore::IntRect indicatorRect(0, 0, 52, 27);
         m_dirtyRegion.unite(indicatorRect);
     }
 
-    IntRect expandedScaledLayerBounds(IntPoint(), expandedScaledSize);
+    WebCore::IntRect expandedScaledLayerBounds(WebCore::IntPoint(), expandedScaledSize);
     bool willPaintEntireBackingStore = m_dirtyRegion.contains(layerBounds);
 
     swapToValidFrontBuffer();
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     if (m_acceleratesDrawing) {
         RetainPtr<CGImageRef> backImage;
         if (m_backBuffer.surface && !willPaintEntireBackingStore)
             backImage = m_backBuffer.surface->createImage();
 
         if (m_frontBuffer.surface) {
-            GraphicsContext& context = m_frontBuffer.surface->ensureGraphicsContext();
+            WebCore::GraphicsContext& context = m_frontBuffer.surface->ensureGraphicsContext();
 
-            context.scale(FloatSize(1, -1));
+            context.scale(WebCore::FloatSize(1, -1));
             context.translate(0, -expandedScaledSize.height());
             drawInContext(context, backImage.get());
 
@@ -273,7 +273,7 @@ bool RemoteLayerBackingStore::display()
 #endif
     {
         ASSERT(!m_acceleratesDrawing);
-        std::unique_ptr<GraphicsContext> context = m_frontBuffer.bitmap->createGraphicsContext();
+        std::unique_ptr<WebCore::GraphicsContext> context = m_frontBuffer.bitmap->createGraphicsContext();
 
         RetainPtr<CGImageRef> backImage;
         if (m_backBuffer.bitmap && !willPaintEntireBackingStore)
@@ -287,35 +287,35 @@ bool RemoteLayerBackingStore::display()
     return true;
 }
 
-void RemoteLayerBackingStore::drawInContext(GraphicsContext& context, CGImageRef backImage)
+void RemoteLayerBackingStore::drawInContext(WebCore::GraphicsContext& context, CGImageRef backImage)
 {
-    FloatSize scaledSize = m_size;
+    WebCore::FloatSize scaledSize = m_size;
     scaledSize.scale(m_scale);
-    IntRect scaledLayerBounds(IntPoint(), roundedIntSize(scaledSize));
+    WebCore::IntRect scaledLayerBounds(WebCore::IntPoint(), WebCore::roundedIntSize(scaledSize));
 
     // If we have less than webLayerMaxRectsToPaint rects to paint and they cover less
     // than webLayerWastedSpaceThreshold of the total dirty area, we'll repaint each rect separately.
     // Otherwise, repaint the entire bounding box of the dirty region.
-    IntRect dirtyBounds = m_dirtyRegion.bounds();
+    WebCore::IntRect dirtyBounds = m_dirtyRegion.bounds();
 
-    Vector<IntRect> dirtyRects = m_dirtyRegion.rects();
-    if (dirtyRects.size() > PlatformCALayer::webLayerMaxRectsToPaint || m_dirtyRegion.totalArea() > PlatformCALayer::webLayerWastedSpaceThreshold * dirtyBounds.width() * dirtyBounds.height()) {
+    auto dirtyRects = m_dirtyRegion.rects();
+    if (dirtyRects.size() > WebCore::PlatformCALayer::webLayerMaxRectsToPaint || m_dirtyRegion.totalArea() > WebCore::PlatformCALayer::webLayerWastedSpaceThreshold * dirtyBounds.width() * dirtyBounds.height()) {
         dirtyRects.clear();
         dirtyRects.append(dirtyBounds);
     }
 
     // FIXME: find a consistent way to scale and snap dirty and CG clip rects.
     for (const auto& rect : dirtyRects) {
-        FloatRect scaledRect(rect);
+        WebCore::FloatRect scaledRect(rect);
         scaledRect.scale(m_scale);
-        scaledRect = enclosingIntRect(scaledRect);
+        scaledRect = WebCore::enclosingIntRect(scaledRect);
         scaledRect.scale(1 / m_scale);
         m_paintingRects.append(scaledRect);
     }
 
-    CGRect cgPaintingRects[PlatformCALayer::webLayerMaxRectsToPaint];
+    CGRect cgPaintingRects[WebCore::PlatformCALayer::webLayerMaxRectsToPaint];
     for (size_t i = 0, dirtyRectCount = m_paintingRects.size(); i < dirtyRectCount; ++i) {
-        FloatRect scaledPaintingRect = m_paintingRects[i];
+        WebCore::FloatRect scaledPaintingRect = m_paintingRects[i];
         scaledPaintingRect.scale(m_scale);
         cgPaintingRects[i] = scaledPaintingRect;
     }
@@ -323,7 +323,7 @@ void RemoteLayerBackingStore::drawInContext(GraphicsContext& context, CGImageRef
     CGContextRef cgContext = context.platformContext();
 
     if (backImage) {
-        CGContextStateSaver stateSaver(cgContext);
+        WebCore::CGContextStateSaver stateSaver(cgContext);
         CGContextSetBlendMode(cgContext, kCGBlendModeCopy);
         CGContextTranslateCTM(cgContext, 0, scaledLayerBounds.height());
         CGContextScaleCTM(cgContext, 1, -1);
@@ -337,7 +337,7 @@ void RemoteLayerBackingStore::drawInContext(GraphicsContext& context, CGImageRef
 
 #ifndef NDEBUG
     if (m_isOpaque)
-        context.fillRect(scaledLayerBounds, Color(255, 0, 0));
+        context.fillRect(scaledLayerBounds, WebCore::Color(255, 47, 146));
 #endif
 
     context.scale(m_scale);
@@ -346,35 +346,36 @@ void RemoteLayerBackingStore::drawInContext(GraphicsContext& context, CGImageRef
     
     // FIXME: This should be moved to PlatformCALayerRemote for better layering.
     switch (m_layer->layerType()) {
-    case PlatformCALayer::LayerTypeSimpleLayer:
-    case PlatformCALayer::LayerTypeTiledBackingTileLayer:
+    case WebCore::PlatformCALayer::LayerTypeSimpleLayer:
+    case WebCore::PlatformCALayer::LayerTypeTiledBackingTileLayer:
         m_layer->owner()->platformCALayerPaintContents(m_layer, context, dirtyBounds, flags);
         break;
-    case PlatformCALayer::LayerTypeWebLayer:
-    case PlatformCALayer::LayerTypeBackdropLayer:
-        PlatformCALayer::drawLayerContents(cgContext, m_layer, m_paintingRects, flags);
+    case WebCore::PlatformCALayer::LayerTypeWebLayer:
+    case WebCore::PlatformCALayer::LayerTypeBackdropLayer:
+        WebCore::PlatformCALayer::drawLayerContents(cgContext, m_layer, m_paintingRects, flags);
         break;
-    case PlatformCALayer::LayerTypeDarkSystemBackdropLayer:
-    case PlatformCALayer::LayerTypeLightSystemBackdropLayer:
+    case WebCore::PlatformCALayer::LayerTypeDarkSystemBackdropLayer:
+    case WebCore::PlatformCALayer::LayerTypeLightSystemBackdropLayer:
         // FIXME: These have a more complicated layer hierarchy. We need to paint into
         // a child layer in order to see the rendered results.
-        PlatformCALayer::drawLayerContents(cgContext, m_layer, m_paintingRects, flags);
+        WebCore::PlatformCALayer::drawLayerContents(cgContext, m_layer, m_paintingRects, flags);
         break;
-    case PlatformCALayer::LayerTypeLayer:
-    case PlatformCALayer::LayerTypeTransformLayer:
-    case PlatformCALayer::LayerTypeTiledBackingLayer:
-    case PlatformCALayer::LayerTypePageTiledBackingLayer:
-    case PlatformCALayer::LayerTypeRootLayer:
-    case PlatformCALayer::LayerTypeAVPlayerLayer:
-    case PlatformCALayer::LayerTypeContentsProvidedLayer:
-    case PlatformCALayer::LayerTypeShapeLayer:
-    case PlatformCALayer::LayerTypeScrollingLayer:
-    case PlatformCALayer::LayerTypeCustom:
+    case WebCore::PlatformCALayer::LayerTypeLayer:
+    case WebCore::PlatformCALayer::LayerTypeTransformLayer:
+    case WebCore::PlatformCALayer::LayerTypeTiledBackingLayer:
+    case WebCore::PlatformCALayer::LayerTypePageTiledBackingLayer:
+    case WebCore::PlatformCALayer::LayerTypeRootLayer:
+    case WebCore::PlatformCALayer::LayerTypeAVPlayerLayer:
+    case WebCore::PlatformCALayer::LayerTypeContentsProvidedLayer:
+    case WebCore::PlatformCALayer::LayerTypeShapeLayer:
+    case WebCore::PlatformCALayer::LayerTypeScrollContainerLayer:
+    case WebCore::PlatformCALayer::LayerTypeEditableImageLayer:
+    case WebCore::PlatformCALayer::LayerTypeCustom:
         ASSERT_NOT_REACHED();
         break;
     };
 
-    m_dirtyRegion = Region();
+    m_dirtyRegion = WebCore::Region();
     m_paintingRects.clear();
 
     m_frontContextPendingFlush = context.platformContext();
@@ -399,19 +400,19 @@ void RemoteLayerBackingStore::applyBackingStoreToLayer(CALayer *layer, LayerCont
 {
     layer.contentsOpaque = m_isOpaque;
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     if (acceleratesDrawing()) {
         switch (contentsType) {
         case LayerContentsType::IOSurface:
             if (!m_frontBuffer.surface) {
                 ASSERT(m_frontBufferSendRight);
-                m_frontBuffer.surface = WebCore::IOSurface::createFromSendRight(WTFMove(m_frontBufferSendRight), sRGBColorSpaceRef());
+                m_frontBuffer.surface = WebCore::IOSurface::createFromSendRight(WTFMove(m_frontBufferSendRight), WebCore::sRGBColorSpaceRef());
             }
             layer.contents = m_frontBuffer.surface ? m_frontBuffer.surface->asLayerContents() : nil;
             break;
         case LayerContentsType::CAMachPort:
             ASSERT(m_frontBufferSendRight);
-            layer.contents = (id)adoptCF(CAMachPortCreate(m_frontBufferSendRight.leakSendRight())).get();
+            layer.contents = (__bridge id)adoptCF(CAMachPortCreate(m_frontBufferSendRight.leakSendRight())).get();
             break;
         }
         return;
@@ -419,7 +420,7 @@ void RemoteLayerBackingStore::applyBackingStoreToLayer(CALayer *layer, LayerCont
 #endif
 
     ASSERT(!acceleratesDrawing());
-    layer.contents = (id)m_frontBuffer.bitmap->makeCGImageCopy().get();
+    layer.contents = (__bridge id)m_frontBuffer.bitmap->makeCGImageCopy().get();
 }
 
 RetainPtr<CGContextRef> RemoteLayerBackingStore::takeFrontContextPendingFlush()
@@ -427,46 +428,56 @@ RetainPtr<CGContextRef> RemoteLayerBackingStore::takeFrontContextPendingFlush()
     return WTFMove(m_frontContextPendingFlush);
 }
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
 bool RemoteLayerBackingStore::setBufferVolatility(BufferType type, bool isVolatile)
 {
+    // Return value is true if we succeeded in making volatile.
+    auto makeVolatile = [] (Buffer& buffer) -> bool {
+        if (!buffer.surface || buffer.isVolatile)
+            return true;
+
+        buffer.surface->releaseGraphicsContext();
+
+        if (!buffer.surface->isInUse()) {
+            buffer.surface->setIsVolatile(true);
+            buffer.isVolatile = true;
+            return true;
+        }
+    
+        return false;
+    };
+
+    // Return value is true if we need to repaint.
+    auto makeNonVolatile = [] (Buffer& buffer) -> bool {
+        if (!buffer.surface || !buffer.isVolatile)
+            return false;
+
+        auto previousState = buffer.surface->setIsVolatile(false);
+        buffer.isVolatile = false;
+
+        return previousState == WebCore::IOSurface::SurfaceState::Empty;
+    };
+
     switch (type) {
     case BufferType::Front:
-        if (m_frontBuffer.surface && m_frontBuffer.isVolatile != isVolatile) {
-            if (isVolatile)
-                m_frontBuffer.surface->releaseGraphicsContext();
-            if (!isVolatile || !m_frontBuffer.surface->isInUse()) {
-                auto previousState = m_frontBuffer.surface->setIsVolatile(isVolatile);
-                m_frontBuffer.isVolatile = isVolatile;
-
-                // Becoming non-volatile and the front buffer was purged, so we need to repaint.
-                if (!isVolatile && (previousState == WebCore::IOSurface::SurfaceState::Empty))
-                    setNeedsDisplay();
-            } else
-                return false;
-        }
+        if (isVolatile)
+            return makeVolatile(m_frontBuffer);
+        
+        // Becoming non-volatile and the front buffer was purged, so we need to repaint.
+        if (makeNonVolatile(m_frontBuffer))
+            setNeedsDisplay();
         break;
     case BufferType::Back:
-        if (m_backBuffer.surface && m_backBuffer.isVolatile != isVolatile) {
-            if (isVolatile)
-                m_backBuffer.surface->releaseGraphicsContext();
-            if (!isVolatile || !m_backBuffer.surface->isInUse()) {
-                m_backBuffer.surface->setIsVolatile(isVolatile);
-                m_backBuffer.isVolatile = isVolatile;
-            } else
-                return false;
-        }
+        if (isVolatile)
+            return makeVolatile(m_backBuffer);
+    
+        makeNonVolatile(m_backBuffer);
         break;
     case BufferType::SecondaryBack:
-        if (m_secondaryBackBuffer.surface && m_secondaryBackBuffer.isVolatile != isVolatile) {
-            if (isVolatile)
-                m_secondaryBackBuffer.surface->releaseGraphicsContext();
-            if (!isVolatile || !m_secondaryBackBuffer.surface->isInUse()) {
-                m_secondaryBackBuffer.surface->setIsVolatile(isVolatile);
-                m_secondaryBackBuffer.isVolatile = isVolatile;
-            } else
-                return false;
-        }
+        if (isVolatile)
+            return makeVolatile(m_secondaryBackBuffer);
+    
+        makeNonVolatile(m_secondaryBackBuffer);
         break;
     }
     return true;
@@ -480,7 +491,7 @@ bool RemoteLayerBackingStore::setBufferVolatility(BufferType, bool)
 
 void RemoteLayerBackingStore::Buffer::discard()
 {
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
     if (surface)
         WebCore::IOSurface::moveToPool(WTFMove(surface));
     isVolatile = false;
@@ -488,14 +499,16 @@ void RemoteLayerBackingStore::Buffer::discard()
     bitmap = nullptr;
 }
 
-#if USE(IOSURFACE)
+#if HAVE(IOSURFACE)
 WebCore::IOSurface::Format RemoteLayerBackingStore::surfaceBufferFormat() const
 {
+#if HAVE(IOSURFACE_RGB10)
     if (m_deepColor)
         return m_isOpaque ? WebCore::IOSurface::Format::RGB10 : WebCore::IOSurface::Format::RGB10A8;
+#endif
 
     return WebCore::IOSurface::Format::RGBA;
 }
-#endif // USE(IOSURFACE)
+#endif // HAVE(IOSURFACE)
 
 } // namespace WebKit

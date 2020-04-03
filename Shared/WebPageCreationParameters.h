@@ -37,11 +37,13 @@
 #include <WebCore/Color.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/IntSize.h>
-#include <WebCore/LayoutMilestones.h>
+#include <WebCore/LayoutMilestone.h>
 #include <WebCore/MediaProducer.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
+#include <WebCore/ViewportArguments.h>
 #include <pal/SessionID.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/WTFString.h>
@@ -63,17 +65,17 @@ namespace WebKit {
 
 struct WebPageCreationParameters {
     void encode(IPC::Encoder&) const;
-    static std::optional<WebPageCreationParameters> decode(IPC::Decoder&);
+    static Optional<WebPageCreationParameters> decode(IPC::Decoder&);
 
     WebCore::IntSize viewSize;
 
-    WebCore::ActivityState::Flags activityState;
+    OptionSet<WebCore::ActivityState::Flag> activityState;
     
     WebPreferencesStore store;
     DrawingAreaType drawingAreaType;
+    DrawingAreaIdentifier drawingAreaIdentifier;
     WebPageGroupData pageGroupData;
 
-    bool drawsBackground;
     bool isEditable;
 
     WebCore::Color underlayColor;
@@ -96,9 +98,8 @@ struct WebPageCreationParameters {
 
     Vector<BackForwardListItemState> itemStates;
     PAL::SessionID sessionID;
-    uint64_t highestUsedBackForwardItemID;
 
-    uint64_t userContentControllerID;
+    UserContentControllerIdentifier userContentControllerID;
     uint64_t visitedLinkTableID;
     uint64_t websiteDataStoreID;
     bool canRunBeforeUnloadConfirmPanel;
@@ -107,21 +108,25 @@ struct WebPageCreationParameters {
     float deviceScaleFactor;
     float viewScaleFactor;
 
+    double textZoomFactor { 1 };
+    double pageZoomFactor { 1 };
+
     float topContentInset;
     
     float mediaVolume;
     WebCore::MediaProducer::MutedStateFlags muted;
     bool mayStartMediaWhenInWindow;
+    bool mediaPlaybackIsSuspended { false };
 
-    WebCore::IntSize minimumLayoutSize;
+    WebCore::IntSize viewLayoutSize;
     bool autoSizingShouldExpandToViewHeight;
-    std::optional<WebCore::IntSize> viewportSizeForCSSViewportUnits;
+    Optional<WebCore::IntSize> viewportSizeForCSSViewportUnits;
     
     WebCore::ScrollPinningBehavior scrollPinningBehavior;
 
-    // FIXME: This should be std::optional<WebCore::ScrollbarOverlayStyle>, but we would need to
+    // FIXME: This should be Optional<WebCore::ScrollbarOverlayStyle>, but we would need to
     // correctly handle enums inside Optionals when encoding and decoding. 
-    std::optional<uint32_t> scrollbarOverlayStyle;
+    Optional<uint32_t> scrollbarOverlayStyle;
 
     bool backgroundExtendsBeyondPage;
 
@@ -130,44 +135,59 @@ struct WebPageCreationParameters {
     Vector<String> mimeTypesWithCustomContentProviders;
 
     bool controlledByAutomation;
+    bool isProcessSwap { false };
 
-#if ENABLE(REMOTE_INSPECTOR)
-    bool allowsRemoteInspection;
-    String remoteInspectionNameOverride;
-#endif
+    bool useDarkAppearance { false };
+    bool useElevatedUserInterfaceLevel { false };
 
 #if PLATFORM(MAC)
     ColorSpaceData colorSpace;
+    bool useSystemAppearance;
 #endif
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     WebCore::FloatSize screenSize;
     WebCore::FloatSize availableScreenSize;
+    WebCore::FloatSize overrideScreenSize;
     float textAutosizingWidth;
     bool ignoresViewportScaleLimits;
-    WebCore::FloatSize viewportConfigurationMinimumLayoutSize;
+    WebCore::FloatSize viewportConfigurationViewLayoutSize;
+    double viewportConfigurationLayoutSizeScaleFactor;
+    double viewportConfigurationMinimumEffectiveDeviceWidth;
+    WebCore::FloatSize viewportConfigurationViewSize;
     WebCore::FloatSize maximumUnobscuredSize;
+    int32_t deviceOrientation { 0 };
+    bool keyboardIsAttached { false };
+    bool canShowWhileLocked { false };
+    Optional<WebCore::ViewportArguments> overrideViewportArguments;
 #endif
 #if PLATFORM(COCOA)
     bool smartInsertDeleteEnabled;
+    Vector<String> additionalSupportedImageTypes;
+#endif
+#if USE(WPE_RENDERER)
+    IPC::Attachment hostFileDescriptor;
 #endif
     bool appleMailPaginationQuirkEnabled;
+    bool appleMailLinesClampEnabled;
     bool shouldScaleViewToFitDocument;
 
     WebCore::UserInterfaceLayoutDirection userInterfaceLayoutDirection;
-    WebCore::LayoutMilestones observedLayoutMilestones;
+    OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
 
     String overrideContentSecurityPolicy;
-    std::optional<double> cpuLimit;
+    Optional<double> cpuLimit;
 
     HashMap<String, uint64_t> urlSchemeHandlers;
 
 #if ENABLE(APPLICATION_MANIFEST)
-    std::optional<WebCore::ApplicationManifest> applicationManifest;
+    Optional<WebCore::ApplicationManifest> applicationManifest;
 #endif
 
 #if ENABLE(SERVICE_WORKER)
     bool hasRegisteredServiceWorkers { true };
 #endif
+
+    bool needsFontAttributes { false };
 
     // WebRTC members.
     bool iceCandidateFilteringEnabled { true };
@@ -181,6 +201,10 @@ struct WebPageCreationParameters {
 #if ENABLE(CONTENT_EXTENSIONS)
     Vector<std::pair<String, WebCompiledContentRuleListData>> contentRuleLists;
 #endif
+
+    Optional<WebCore::Color> backgroundColor;
+
+    Optional<WebCore::PageIdentifier> oldPageID;
 };
 
 } // namespace WebKit

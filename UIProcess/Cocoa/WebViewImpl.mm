@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,11 +28,16 @@
 
 #if PLATFORM(MAC)
 
+#import "APIAttachment.h"
 #import "APILegacyContextHistoryClient.h"
+#import "APINavigation.h"
+#import "AppKitSPI.h"
 #import "AttributedString.h"
 #import "ColorSpaceData.h"
+#import "FontInfo.h"
 #import "FullscreenClient.h"
 #import "GenericCallback.h"
+#import "InsertTextOptions.h"
 #import "Logging.h"
 #import "NativeWebGestureEvent.h"
 #import "NativeWebKeyboardEvent.h"
@@ -50,13 +55,19 @@
 #import "TextCheckerState.h"
 #import "TiledCoreAnimationDrawingAreaProxy.h"
 #import "UIGamepadProvider.h"
+#import "UndoOrRedo.h"
 #import "ViewGestureController.h"
 #import "WKBrowsingContextControllerInternal.h"
+#import "WKEditCommand.h"
+#import "WKErrorInternal.h"
 #import "WKFullScreenWindowController.h"
 #import "WKImmediateActionController.h"
 #import "WKPrintingView.h"
+#import "WKSafeBrowsingWarning.h"
+#import "WKShareSheet.h"
 #import "WKTextInputWindowController.h"
 #import "WKViewLayoutStrategy.h"
+#import "WKWebViewInternal.h"
 #import "WKWebViewPrivate.h"
 #import "WebBackForwardList.h"
 #import "WebEditCommandProxy.h"
@@ -67,24 +78,29 @@
 #import "WebProcessProxy.h"
 #import "_WKRemoteObjectRegistryInternal.h"
 #import "_WKThumbnailViewInternal.h"
-#import <HIToolbox/CarbonEventsCore.h>
+#import <Carbon/Carbon.h>
 #import <WebCore/AXObjectCache.h>
 #import <WebCore/ActivityState.h>
 #import <WebCore/ColorMac.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DragData.h>
+#import <WebCore/DragItem.h>
 #import <WebCore/Editor.h>
+#import <WebCore/FontAttributeChanges.h>
+#import <WebCore/FontAttributes.h>
 #import <WebCore/KeypressCommand.h>
 #import <WebCore/LegacyNSPasteboardTypes.h>
 #import <WebCore/LoaderNSURLExtras.h>
 #import <WebCore/LocalizedStrings.h>
 #import <WebCore/PlatformEventFactoryMac.h>
+#import <WebCore/PromisedAttachmentInfo.h>
 #import <WebCore/TextAlternativeWithRange.h>
 #import <WebCore/TextUndoInsertionMarkupMac.h>
 #import <WebCore/WebActionDisablingCALayerDelegate.h>
 #import <WebCore/WebCoreCALayerExtras.h>
 #import <WebCore/WebCoreFullScreenPlaceholderView.h>
 #import <WebCore/WebCoreFullScreenWindow.h>
+#import <WebCore/WebCoreNSFontManagerExtras.h>
 #import <WebCore/WebPlaybackControlsManager.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <pal/spi/cocoa/AVKitSPI.h>
@@ -97,9 +113,12 @@
 #import <pal/spi/mac/NSScrollerImpSPI.h>
 #import <pal/spi/mac/NSSpellCheckerSPI.h>
 #import <pal/spi/mac/NSTextFinderSPI.h>
+#import <pal/spi/mac/NSViewSPI.h>
 #import <pal/spi/mac/NSWindowSPI.h>
 #import <sys/stat.h>
+#import <wtf/FileSystem.h>
 #import <wtf/NeverDestroyed.h>
+#import <wtf/ProcessPrivilege.h>
 #import <wtf/SetForScope.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cf/TypeCastsCF.h>
@@ -117,8 +136,6 @@ SOFT_LINK_CLASS(AVKit, AVFunctionBarScrubber)
 
 static NSString * const WKMediaExitFullScreenItem = @"WKMediaExitFullScreenItem";
 #endif // HAVE(TOUCH_BAR) && ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
-
-SOFT_LINK_CONSTANT_MAY_FAIL(Lookup, LUNotificationPopoverWillClose, NSString *)
 
 WTF_DECLARE_CF_TYPE_TRAIT(CGImage);
 
@@ -183,13 +200,15 @@ WTF_DECLARE_CF_TYPE_TRAIT(CGImage);
 @interface WKWindowVisibilityObserver : NSObject {
     NSView *_view;
     WebKit::WebViewImpl *_impl;
+
+    BOOL _didRegisterForLookupPopoverCloseNotifications;
 }
 
 - (instancetype)initWithView:(NSView *)view impl:(WebKit::WebViewImpl&)impl;
 - (void)startObserving:(NSWindow *)window;
 - (void)stopObserving:(NSWindow *)window;
 - (void)startObservingFontPanel;
-- (void)startObservingLookupDismissal;
+- (void)startObservingLookupDismissalIfNeeded;
 @end
 
 @implementation WKWindowVisibilityObserver
@@ -211,8 +230,10 @@ WTF_DECLARE_CF_TYPE_TRAIT(CGImage);
 
 - (void)dealloc
 {
-    if (canLoadLUNotificationPopoverWillClose())
-        [[NSNotificationCenter defaultCenter] removeObserver:self name:getLUNotificationPopoverWillClose() object:nil];
+#if !ENABLE(REVEAL)
+    if (_didRegisterForLookupPopoverCloseNotifications && PAL::canLoad_Lookup_LUNotificationPopoverWillClose())
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:PAL::get_Lookup_LUNotificationPopoverWillClose() object:nil];
+#endif // !ENABLE(REVEAL)
 
     NSNotificationCenter *workspaceNotificationCenter = [[NSWorkspace sharedWorkspace] notificationCenter];
     [workspaceNotificationCenter removeObserver:self name:NSWorkspaceActiveSpaceDidChangeNotification object:nil];
@@ -280,10 +301,16 @@ static void* keyValueObservingContext = &keyValueObservingContext;
     [[NSFontPanel sharedFontPanel] addObserver:self forKeyPath:@"visible" options:0 context:keyValueObservingContext];
 }
 
-- (void)startObservingLookupDismissal
+- (void)startObservingLookupDismissalIfNeeded
 {
-    if (canLoadLUNotificationPopoverWillClose())
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_dictionaryLookupPopoverWillClose:) name:getLUNotificationPopoverWillClose() object:nil];
+    if (_didRegisterForLookupPopoverCloseNotifications)
+        return;
+
+    _didRegisterForLookupPopoverCloseNotifications = YES;
+#if !ENABLE(REVEAL)
+    if (PAL::canLoad_Lookup_LUNotificationPopoverWillClose())
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_dictionaryLookupPopoverWillClose:) name:PAL::get_Lookup_LUNotificationPopoverWillClose() object:nil];
+#endif
 }
 
 - (void)_windowDidOrderOnScreen:(NSNotification *)notification
@@ -355,68 +382,23 @@ static void* keyValueObservingContext = &keyValueObservingContext;
     }
 
     if ([keyPath isEqualToString:@"visible"] && [NSFontPanel sharedFontPanelExists] && object == [NSFontPanel sharedFontPanel]) {
-        _impl->updateFontPanelIfNeeded();
+        _impl->updateFontManagerIfNeeded();
         return;
     }
     if ([keyPath isEqualToString:@"contentLayoutRect"] || [keyPath isEqualToString:@"titlebarAppearsTransparent"])
         _impl->updateContentInsetsIfAutomatic();
 }
 
+#if !ENABLE(REVEAL)
 - (void)_dictionaryLookupPopoverWillClose:(NSNotification *)notification
 {
     _impl->clearTextIndicatorWithAnimation(WebCore::TextIndicatorWindowDismissalAnimation::None);
 }
+#endif
 
 - (void)_activeSpaceDidChange:(NSNotification *)notification
 {
     _impl->activeSpaceDidChange();
-}
-
-@end
-
-@interface WKEditCommandObjC : NSObject {
-    RefPtr<WebKit::WebEditCommandProxy> m_command;
-}
-- (id)initWithWebEditCommandProxy:(RefPtr<WebKit::WebEditCommandProxy>)command;
-- (WebKit::WebEditCommandProxy*)command;
-@end
-
-@interface WKEditorUndoTargetObjC : NSObject
-- (void)undoEditing:(id)sender;
-- (void)redoEditing:(id)sender;
-@end
-
-@implementation WKEditCommandObjC
-
-- (id)initWithWebEditCommandProxy:(RefPtr<WebKit::WebEditCommandProxy>)command
-{
-    self = [super init];
-    if (!self)
-        return nil;
-
-    m_command = command;
-    return self;
-}
-
-- (WebKit::WebEditCommandProxy*)command
-{
-    return m_command.get();
-}
-
-@end
-
-@implementation WKEditorUndoTargetObjC
-
-- (void)undoEditing:(id)sender
-{
-    ASSERT([sender isKindOfClass:[WKEditCommandObjC class]]);
-    [sender command]->unapply();
-}
-
-- (void)redoEditing:(id)sender
-{
-    ASSERT([sender isKindOfClass:[WKEditCommandObjC class]]);
-    [sender command]->reapply();
 }
 
 @end
@@ -499,19 +481,17 @@ static void* keyValueObservingContext = &keyValueObservingContext;
 
 @end
 
-using namespace WebKit;
-
 #if HAVE(TOUCH_BAR)
 
 @interface WKTextListTouchBarViewController : NSViewController {
 @private
-    WebViewImpl* _webViewImpl;
-    ListType _currentListType;
+    WebKit::WebViewImpl* _webViewImpl;
+    WebKit::ListType _currentListType;
 }
 
-@property (nonatomic) ListType currentListType;
+@property (nonatomic) WebKit::ListType currentListType;
 
-- (instancetype)initWithWebViewImpl:(WebViewImpl*)webViewImpl;
+- (instancetype)initWithWebViewImpl:(WebKit::WebViewImpl*)webViewImpl;
 
 @end
 
@@ -528,7 +508,7 @@ static const NSUInteger noListSegment = 0;
 static const NSUInteger unorderedListSegment = 1;
 static const NSUInteger orderedListSegment = 2;
 
-- (instancetype)initWithWebViewImpl:(WebViewImpl*)webViewImpl
+- (instancetype)initWithWebViewImpl:(WebKit::WebViewImpl*)webViewImpl
 {
     if (!(self = [super init]))
         return nil;
@@ -541,15 +521,14 @@ static const NSUInteger orderedListSegment = 2;
     [insertListControl setWidth:listControlSegmentWidth forSegment:orderedListSegment];
     insertListControl.font = [NSFont systemFontOfSize:15];
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     id segmentElement = NSAccessibilityUnignoredDescendant(insertListControl);
     NSArray *segments = [segmentElement accessibilityAttributeValue:NSAccessibilityChildrenAttribute];
     ASSERT(segments.count == 3);
     [segments[noListSegment] accessibilitySetOverrideValue:WebCore::insertListTypeNone() forAttribute:NSAccessibilityDescriptionAttribute];
     [segments[unorderedListSegment] accessibilitySetOverrideValue:WebCore::insertListTypeBulletedAccessibilityTitle() forAttribute:NSAccessibilityDescriptionAttribute];
     [segments[orderedListSegment] accessibilitySetOverrideValue:WebCore::insertListTypeNumberedAccessibilityTitle() forAttribute:NSAccessibilityDescriptionAttribute];
-#pragma clang diagnostic pop
+    ALLOW_DEPRECATED_DECLARATIONS_END
 
     self.view = insertListControl;
 
@@ -572,9 +551,9 @@ static const NSUInteger orderedListSegment = 2;
         // There is no "remove list" edit command, but InsertOrderedList and InsertUnorderedList both
         // behave as toggles, so we can invoke the appropriate edit command depending on our _currentListType
         // to remove an existing list. We don't have to do anything if _currentListType is NoList.
-        if (_currentListType == OrderedList)
+        if (_currentListType == WebKit::OrderedList)
             _webViewImpl->page().executeEditCommand(@"InsertOrderedList", @"");
-        else if (_currentListType == UnorderedList)
+        else if (_currentListType == WebKit::UnorderedList)
             _webViewImpl->page().executeEditCommand(@"InsertUnorderedList", @"");
         break;
     case unorderedListSegment:
@@ -588,17 +567,17 @@ static const NSUInteger orderedListSegment = 2;
     _webViewImpl->dismissTextTouchBarPopoverItemWithIdentifier(NSTouchBarItemIdentifierTextList);
 }
 
-- (void)setCurrentListType:(ListType)listType
+- (void)setCurrentListType:(WebKit::ListType)listType
 {
     NSSegmentedControl *insertListControl = (NSSegmentedControl *)self.view;
     switch (listType) {
-    case NoList:
+    case WebKit::NoList:
         [insertListControl setSelected:YES forSegment:noListSegment];
         break;
-    case OrderedList:
+    case WebKit::OrderedList:
         [insertListControl setSelected:YES forSegment:orderedListSegment];
         break;
-    case UnorderedList:
+    case WebKit::UnorderedList:
         [insertListControl setSelected:YES forSegment:unorderedListSegment];
         break;
     }
@@ -618,7 +597,7 @@ static const NSUInteger orderedListSegment = 2;
     RetainPtr<WKTextListTouchBarViewController> _textListTouchBarViewController;
 
 @private
-    WebViewImpl* _webViewImpl;
+    WebKit::WebViewImpl* _webViewImpl;
 }
 
 @property (nonatomic) BOOL textIsBold;
@@ -627,7 +606,7 @@ static const NSUInteger orderedListSegment = 2;
 @property (nonatomic) NSTextAlignment currentTextAlignment;
 @property (nonatomic, retain, readwrite) NSColor *textColor;
 
-- (instancetype)initWithWebViewImpl:(WebViewImpl*)webViewImpl;
+- (instancetype)initWithWebViewImpl:(WebKit::WebViewImpl*)webViewImpl;
 @end
 
 @implementation WKTextTouchBarItemController
@@ -637,7 +616,7 @@ static const NSUInteger orderedListSegment = 2;
 @synthesize textIsUnderlined=_textIsUnderlined;
 @synthesize currentTextAlignment=_currentTextAlignment;
 
-- (instancetype)initWithWebViewImpl:(WebViewImpl*)webViewImpl
+- (instancetype)initWithWebViewImpl:(WebKit::WebViewImpl*)webViewImpl
 {
     if (!(self = [super init]))
         return nil;
@@ -661,7 +640,7 @@ static const NSUInteger orderedListSegment = 2;
     return [self itemForIdentifier:identifier];
 }
 
-- (nullable NSTouchBarItem *)itemForIdentifier:(NSString *)identifier
+- (NSTouchBarItem *)itemForIdentifier:(NSString *)identifier
 {
     NSTouchBarItem *item = [super itemForIdentifier:identifier];
     BOOL isTextFormatItem = [identifier isEqualToString:NSTouchBarItemIdentifierTextFormat];
@@ -862,6 +841,51 @@ static const NSUInteger orderedListSegment = 2;
 
 @end
 
+@interface WKPromisedAttachmentContext : NSObject {
+@private
+    RetainPtr<NSURL> _blobURL;
+    RetainPtr<NSString> _fileName;
+    RetainPtr<NSString> _attachmentIdentifier;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier blobURL:(NSURL *)url fileName:(NSString *)fileName;
+
+@property (nonatomic, readonly) NSURL *blobURL;
+@property (nonatomic, readonly) NSString *fileName;
+@property (nonatomic, readonly) NSString *attachmentIdentifier;
+
+@end
+
+@implementation WKPromisedAttachmentContext
+
+- (instancetype)initWithIdentifier:(NSString *)identifier blobURL:(NSURL *)blobURL fileName:(NSString *)fileName
+{
+    if (!(self = [super init]))
+        return nil;
+
+    _blobURL = blobURL;
+    _fileName = fileName;
+    _attachmentIdentifier = identifier;
+    return self;
+}
+
+- (NSURL *)blobURL
+{
+    return _blobURL.get();
+}
+
+- (NSString *)fileName
+{
+    return _fileName.get();
+}
+
+- (NSString *)attachmentIdentifier
+{
+    return _attachmentIdentifier.get();
+}
+
+@end
+
 namespace WebKit {
 
 NSTouchBar *WebViewImpl::makeTouchBar()
@@ -880,7 +904,7 @@ void WebViewImpl::updateTouchBar()
 
     NSTouchBar *touchBar = nil;
     bool userActionRequirementsHaveBeenMet = m_requiresUserActionForEditingControlsManager ? m_page->hasHadSelectionChangesFromUserInteraction() : true;
-    if (m_page->editorState().isContentEditable && !m_page->needsHiddenContentEditableQuirk()) {
+    if (m_page->editorState().isContentEditable && !m_page->isTouchBarUpdateSupressedForHiddenContentEditable()) {
         updateTextTouchBar();
         if (userActionRequirementsHaveBeenMet)
             touchBar = textTouchBar();
@@ -921,7 +945,7 @@ NSCandidateListTouchBarItem *WebViewImpl::candidateListTouchBarItem() const
 {
     if (m_page->editorState().isInPasswordField)
         return m_passwordTextCandidateListTouchBarItem.get();
-    return isRichlyEditable() ? m_richTextCandidateListTouchBarItem.get() : m_plainTextCandidateListTouchBarItem.get();
+    return isRichlyEditableForTouchBar() ? m_richTextCandidateListTouchBarItem.get() : m_plainTextCandidateListTouchBarItem.get();
 }
 
 #if ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
@@ -1032,16 +1056,16 @@ void WebViewImpl::setUpTextTouchBar(NSTouchBar *touchBar)
         textFormatItem.groupTouchBar.customizationIdentifier = @"WKTextFormatTouchBar";
 }
 
-bool WebViewImpl::isRichlyEditable() const
+bool WebViewImpl::isRichlyEditableForTouchBar() const
 {
-    return m_page->editorState().isContentRichlyEditable && !m_page->needsPlainTextQuirk();
+    return m_page->editorState().isContentRichlyEditable && !m_page->isNeverRichlyEditableForTouchBar();
 }
 
 NSTouchBar *WebViewImpl::textTouchBar() const
 {
     if (m_page->editorState().isInPasswordField)
         return m_passwordTextTouchBar.get();
-    return isRichlyEditable() ? m_richTextTouchBar.get() : m_plainTextTouchBar.get();
+    return isRichlyEditableForTouchBar() ? m_richTextTouchBar.get() : m_plainTextTouchBar.get();
 }
 
 static NSTextAlignment nsTextAlignmentFromTextAlignment(TextAlignment textAlignment)
@@ -1133,7 +1157,7 @@ void WebViewImpl::updateTextTouchBar()
 
     // Set current typing attributes for rich text. This will ensure that the buttons reflect the state of
     // the text when changing selection throughout the document.
-    if (isRichlyEditable()) {
+    if (isRichlyEditableForTouchBar()) {
         const EditorState& editorState = m_page->editorState();
         if (!editorState.isMissingPostLayoutData) {
             [m_textTouchBarItemController setTextIsBold:(bool)(m_page->editorState().postLayoutData().typingAttributes & AttributeBold)];
@@ -1147,6 +1171,37 @@ void WebViewImpl::updateTextTouchBar()
         [m_textTouchBarItemController setUsesNarrowTextStyleItem:isShowingCombinedTextFormatItem && isShowingCandidateListItem];
     }
 }
+
+#if ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
+
+bool WebViewImpl::isPictureInPictureActive()
+{
+    return [m_playbackControlsManager isPictureInPictureActive];
+}
+
+void WebViewImpl::togglePictureInPicture()
+{
+    [m_playbackControlsManager togglePictureInPicture];
+}
+
+void WebViewImpl::updateMediaPlaybackControlsManager()
+{
+    if (!m_page->hasActiveVideoForControlsManager())
+        return;
+
+    if (!m_playbackControlsManager) {
+        m_playbackControlsManager = adoptNS([[WebPlaybackControlsManager alloc] init]);
+        [m_playbackControlsManager setAllowsPictureInPicturePlayback:m_page->preferences().allowsPictureInPictureMediaPlayback()];
+        [m_playbackControlsManager setCanTogglePictureInPicture:NO];
+    }
+
+    if (PlatformPlaybackSessionInterface* interface = m_page->playbackSessionManager()->controlsManagerInterface()) {
+        [m_playbackControlsManager setPlaybackSessionInterfaceMac:interface];
+        interface->updatePlaybackControlsManagerCanTogglePictureInPicture();
+    }
+}
+
+#endif // ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
 
 void WebViewImpl::updateMediaTouchBar()
 {
@@ -1170,14 +1225,7 @@ void WebViewImpl::updateMediaTouchBar()
 #endif // __MAC_OS_X_VERSION_MIN_REQUIRED >= 101300
     }
 
-    if (!m_playbackControlsManager) {
-        m_playbackControlsManager = adoptNS([[WebPlaybackControlsManager alloc] init]);
-        [m_playbackControlsManager setAllowsPictureInPicturePlayback:m_page->preferences().allowsPictureInPictureMediaPlayback()];
-        [m_playbackControlsManager setCanTogglePictureInPicture:YES];
-    }
-
-    if (PlatformPlaybackSessionInterface* interface = m_page->playbackSessionManager()->controlsManagerInterface())
-        [m_playbackControlsManager setPlaybackSessionInterfaceMac:interface];
+    updateMediaPlaybackControlsManager();
 
     [m_mediaTouchBarProvider setPlaybackControlsController:m_playbackControlsManager.get()];
     [m_mediaPlaybackControlsView setPlaybackControlsController:m_playbackControlsManager.get()];
@@ -1212,6 +1260,19 @@ void WebViewImpl::updateMediaTouchBar()
         [m_view _web_didAddMediaControlsManager:m_mediaPlaybackControlsView.get()];
 #endif
 }
+
+#if HAVE(TOUCH_BAR)
+
+bool WebViewImpl::canTogglePictureInPicture()
+{
+#if ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
+    return [m_playbackControlsManager canTogglePictureInPicture];
+#else
+    return NO;
+#endif
+}
+
+#endif // HAVE(TOUCH_BAR)
 
 void WebViewImpl::forceRequestCandidatesForTesting()
 {
@@ -1278,16 +1339,33 @@ WebViewImpl::WebViewImpl(NSView <WebViewImplDelegate> *view, WKWebView *outerWeb
     , m_needsViewFrameInWindowCoordinates(m_page->preferences().pluginsEnabled())
     , m_intrinsicContentSize(CGSizeMake(NSViewNoIntrinsicMetric, NSViewNoIntrinsicMetric))
     , m_layoutStrategy([WKViewLayoutStrategy layoutStrategyWithPage:m_page view:view viewImpl:*this mode:kWKLayoutModeViewSize])
-    , m_undoTarget(adoptNS([[WKEditorUndoTargetObjC alloc] init]))
+    , m_undoTarget(adoptNS([[WKEditorUndoTarget alloc] init]))
     , m_windowVisibilityObserver(adoptNS([[WKWindowVisibilityObserver alloc] initWithView:view impl:*this]))
     , m_accessibilitySettingsObserver(adoptNS([[WKAccessibilitySettingsObserver alloc] initWithImpl:*this]))
     , m_primaryTrackingArea(adoptNS([[NSTrackingArea alloc] initWithRect:view.frame options:trackingAreaOptions() owner:view userInfo:nil]))
 {
     static_cast<PageClientImpl&>(*m_pageClient).setImpl(*this);
 
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     [NSApp registerServicesMenuSendTypes:PasteboardTypes::forSelection() returnTypes:PasteboardTypes::forEditing()];
 
     [view addTrackingArea:m_primaryTrackingArea.get()];
+
+    // Create an NSView that will host our layer tree.
+    m_layerHostingView = adoptNS([[WKFlippedView alloc] initWithFrame:[m_view bounds]]);
+    [m_layerHostingView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+
+    [view addSubview:m_layerHostingView.get() positioned:NSWindowBelow relativeTo:nil];
+
+    // Create a root layer that will back the NSView.
+    RetainPtr<CALayer> layer = adoptNS([[CALayer alloc] init]);
+    [layer setDelegate:[WebActionDisablingCALayerDelegate shared]];
+#ifndef NDEBUG
+    [layer setName:@"Hosting root layer"];
+#endif
+
+    [m_layerHostingView setLayer:layer.get()];
+    [m_layerHostingView setWantsLayer:YES];
 
     m_page->setIntrinsicDeviceScaleFactor(intrinsicDeviceScaleFactor());
 
@@ -1309,7 +1387,7 @@ WebViewImpl::WebViewImpl(NSView <WebViewImplDelegate> *view, WKWebView *outerWeb
     // Explicitly set the layer contents placement so AppKit will make sure that our layer has masksToBounds set to YES.
     view.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
 
-#if ENABLE(FULLSCREEN_API) && WK_API_ENABLED
+#if ENABLE(FULLSCREEN_API)
     m_page->setFullscreenClient(std::make_unique<WebKit::FullscreenClient>(view));
 #endif
 
@@ -1318,19 +1396,14 @@ WebViewImpl::WebViewImpl(NSView <WebViewImplDelegate> *view, WKWebView *outerWeb
 
 WebViewImpl::~WebViewImpl()
 {
-#if WK_API_ENABLED
     if (m_remoteObjectRegistry) {
         m_page->process().processPool().removeMessageReceiver(Messages::RemoteObjectRegistry::messageReceiverName(), m_page->pageID());
         [m_remoteObjectRegistry _invalidate];
         m_remoteObjectRegistry = nil;
     }
-#endif
 
     ASSERT(!m_inSecureInputState);
-
-#if WK_API_ENABLED
     ASSERT(!m_thumbnailView);
-#endif
 
     [m_layoutStrategy invalidate];
 
@@ -1355,17 +1428,26 @@ NSWindow *WebViewImpl::window()
     return [m_view window];
 }
 
-void WebViewImpl::processDidExit()
+void WebViewImpl::handleProcessSwapOrExit()
 {
     dismissContentRelativeChildWindowsWithAnimation(true);
 
     notifyInputContextAboutDiscardedComposition();
 
-    if (m_layerHostingView)
-        setAcceleratedCompositingRootLayer(nil);
-
     updateRemoteAccessibilityRegistration(false);
+    flushPendingMouseEventCallbacks();
+}
 
+void WebViewImpl::processWillSwap()
+{
+    handleProcessSwapOrExit();
+    if (m_gestureController)
+        m_gestureController->disconnectFromProcess();
+}
+
+void WebViewImpl::processDidExit()
+{
+    handleProcessSwapOrExit();
     m_gestureController = nullptr;
 }
 
@@ -1376,22 +1458,52 @@ void WebViewImpl::pageClosed()
 
 void WebViewImpl::didRelaunchProcess()
 {
+    if (m_gestureController)
+        m_gestureController->connectToProcess();
+
     accessibilityRegisterUIProcessTokens();
+    windowDidChangeScreen(); // Make sure DisplayID is set.
 }
 
 void WebViewImpl::setDrawsBackground(bool drawsBackground)
 {
-    m_page->setDrawsBackground(drawsBackground);
+    Optional<WebCore::Color> backgroundColor;
+    if (!drawsBackground)
+        backgroundColor = WebCore::Color(WebCore::Color::transparent);
+    m_page->setBackgroundColor(backgroundColor);
+
+    // Make sure updateLayer gets called on the web view.
+    [m_view setNeedsDisplay:YES];
 }
 
 bool WebViewImpl::drawsBackground() const
 {
-    return m_page->drawsBackground();
+    auto& backgroundColor = m_page->backgroundColor();
+    return !backgroundColor || backgroundColor.value().isVisible();
+}
+
+void WebViewImpl::setBackgroundColor(NSColor *backgroundColor)
+{
+    m_backgroundColor = backgroundColor;
+
+    // Make sure updateLayer gets called on the web view.
+    [m_view setNeedsDisplay:YES];
+}
+
+NSColor *WebViewImpl::backgroundColor() const
+{
+    if (!m_backgroundColor)
+#if ENABLE(DARK_MODE_CSS)
+        return [NSColor controlBackgroundColor];
+#else
+        return [NSColor whiteColor];
+#endif
+    return m_backgroundColor.get();
 }
 
 bool WebViewImpl::isOpaque() const
 {
-    return m_page->drawsBackground();
+    return drawsBackground();
 }
 
 void WebViewImpl::setShouldSuppressFirstResponderChanges(bool shouldSuppress)
@@ -1406,6 +1518,7 @@ bool WebViewImpl::acceptsFirstResponder()
 
 bool WebViewImpl::becomeFirstResponder()
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     // If we just became first responder again, there is no need to do anything,
     // since resignFirstResponder has correctly detected this situation.
     if (m_willBecomeFirstResponderAgain) {
@@ -1440,7 +1553,6 @@ bool WebViewImpl::becomeFirstResponder()
 
 bool WebViewImpl::resignFirstResponder()
 {
-#if WK_API_ENABLED
     // Predict the case where we are losing first responder status only to
     // gain it back again. We want resignFirstResponder to do nothing in that case.
     id nextResponder = [[m_view window] _newFirstResponderAfterResigning];
@@ -1450,7 +1562,6 @@ bool WebViewImpl::resignFirstResponder()
         m_willBecomeFirstResponderAgain = true;
         return true;
     }
-#endif
 
     m_willBecomeFirstResponderAgain = false;
     m_inResignFirstResponder = true;
@@ -1469,6 +1580,58 @@ bool WebViewImpl::resignFirstResponder()
     m_inResignFirstResponder = false;
     
     return true;
+}
+
+void WebViewImpl::takeFocus(WebCore::FocusDirection direction)
+{
+    NSView *webView = m_view.getAutoreleased();
+
+    if (direction == WebCore::FocusDirectionForward) {
+        // Since we're trying to move focus out of m_webView, and because
+        // m_webView may contain subviews within it, we ask it for the next key
+        // view of the last view in its key view loop. This makes m_webView
+        // behave as if it had no subviews, which is the behavior we want.
+        [webView.window selectKeyViewFollowingView:[webView _findLastViewInKeyViewLoop]];
+    } else
+        [webView.window selectKeyViewPrecedingView:webView];
+}
+
+void WebViewImpl::showSafeBrowsingWarning(const SafeBrowsingWarning& warning, CompletionHandler<void(Variant<ContinueUnsafeLoad, URL>&&)>&& completionHandler)
+{
+    if (!m_view)
+        return completionHandler(ContinueUnsafeLoad::Yes);
+
+    m_safeBrowsingWarning = adoptNS([[WKSafeBrowsingWarning alloc] initWithFrame:[m_view bounds] safeBrowsingWarning:warning completionHandler:[weakThis = makeWeakPtr(*this), completionHandler = WTFMove(completionHandler)] (auto&& result) mutable {
+        completionHandler(WTFMove(result));
+        if (!weakThis)
+            return;
+        bool navigatesFrame = WTF::switchOn(result,
+            [] (ContinueUnsafeLoad continueUnsafeLoad) { return continueUnsafeLoad == ContinueUnsafeLoad::Yes; },
+            [] (const URL&) { return true; }
+        );
+        bool forMainFrameNavigation = [weakThis->m_safeBrowsingWarning forMainFrameNavigation];
+        if (navigatesFrame && forMainFrameNavigation) {
+            // The safe browsing warning will be hidden once the next page is shown.
+            return;
+        }
+        if (!navigatesFrame && weakThis->m_safeBrowsingWarning && !forMainFrameNavigation) {
+            weakThis->m_page->goBack();
+            return;
+        }
+        [std::exchange(weakThis->m_safeBrowsingWarning, nullptr) removeFromSuperview];
+    }]);
+    [m_view addSubview:m_safeBrowsingWarning.get()];
+}
+
+void WebViewImpl::clearSafeBrowsingWarning()
+{
+    [std::exchange(m_safeBrowsingWarning, nullptr) removeFromSuperview];
+}
+
+void WebViewImpl::clearSafeBrowsingWarningIfForMainFrameNavigation()
+{
+    if ([m_safeBrowsingWarning forMainFrameNavigation])
+        clearSafeBrowsingWarning();
 }
 
 bool WebViewImpl::isFocused() const
@@ -1509,6 +1672,7 @@ void WebViewImpl::renewGState()
 void WebViewImpl::setFrameSize(CGSize)
 {
     [m_layoutStrategy didChangeFrameSize];
+    [m_safeBrowsingWarning setFrame:[m_view bounds]];
 }
 
 void WebViewImpl::disableFrameSizeUpdates()
@@ -1526,11 +1690,11 @@ bool WebViewImpl::frameSizeUpdatesDisabled() const
     return [m_layoutStrategy frameSizeUpdatesDisabled];
 }
 
-void WebViewImpl::setFrameAndScrollBy(CGRect frame, CGSize offset)
+void WebViewImpl::setFrameAndScrollBy(CGRect frame, CGSize scrollDelta)
 {
-    ASSERT(CGSizeEqualToSize(m_resizeScrollOffset, CGSizeZero));
+    if (!CGSizeEqualToSize(scrollDelta, CGSizeZero))
+        m_scrollOffsetAdjustment = scrollDelta;
 
-    m_resizeScrollOffset = offset;
     [m_view frame] = NSRectFromCGRect(frame);
 }
 
@@ -1544,7 +1708,7 @@ void WebViewImpl::updateWindowAndViewFrames()
 
     m_didScheduleWindowAndViewFrameUpdate = true;
 
-    auto weakThis = createWeakPtr();
+    auto weakThis = makeWeakPtr(*this);
     dispatch_async(dispatch_get_main_queue(), [weakThis] {
         if (!weakThis)
             return;
@@ -1557,11 +1721,10 @@ void WebViewImpl::updateWindowAndViewFrames()
         if (weakThis->m_needsViewFrameInWindowCoordinates)
             viewFrameInWindowCoordinates = [weakThis->m_view convertRect:[weakThis->m_view frame] toView:nil];
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         if (WebCore::AXObjectCache::accessibilityEnabled())
             accessibilityPosition = [[weakThis->m_view accessibilityAttributeValue:NSAccessibilityPositionAttribute] pointValue];
-#pragma clang diagnostic pop
+            ALLOW_DEPRECATED_DECLARATIONS_END
         
         weakThis->m_page->windowAndViewFramesChanged(viewFrameInWindowCoordinates, accessibilityPosition);
     });
@@ -1580,12 +1743,12 @@ CGSize WebViewImpl::fixedLayoutSize() const
     return m_page->fixedLayoutSize();
 }
 
-std::unique_ptr<WebKit::DrawingAreaProxy> WebViewImpl::createDrawingAreaProxy()
+std::unique_ptr<WebKit::DrawingAreaProxy> WebViewImpl::createDrawingAreaProxy(WebProcessProxy& process)
 {
     if ([[[NSUserDefaults standardUserDefaults] objectForKey:@"WebKit2UseRemoteLayerTreeDrawingArea"] boolValue])
-        return std::make_unique<RemoteLayerTreeDrawingAreaProxy>(m_page);
+        return std::make_unique<RemoteLayerTreeDrawingAreaProxy>(m_page, process);
 
-    return std::make_unique<TiledCoreAnimationDrawingAreaProxy>(m_page);
+    return std::make_unique<TiledCoreAnimationDrawingAreaProxy>(m_page, process);
 }
 
 bool WebViewImpl::isUsingUISideCompositing() const
@@ -1599,19 +1762,13 @@ void WebViewImpl::setDrawingAreaSize(CGSize size)
     if (!m_page->drawingArea())
         return;
 
-    m_page->drawingArea()->setSize(WebCore::IntSize(size), WebCore::IntSize(), WebCore::IntSize(m_resizeScrollOffset));
-    m_resizeScrollOffset = CGSizeZero;
+    m_page->drawingArea()->setSize(WebCore::IntSize(size), WebCore::IntSize(m_scrollOffsetAdjustment));
+    m_scrollOffsetAdjustment = CGSizeZero;
 }
 
 void WebViewImpl::updateLayer()
 {
-    [m_view layer].backgroundColor = CGColorGetConstantColor(drawsBackground() ? kCGColorWhite : kCGColorClear);
-
-    // If asynchronous geometry updates have been sent by forceAsyncDrawingAreaSizeUpdate,
-    // then subsequent calls to setFrameSize should not result in us waiting for the did
-    // udpate response if setFrameSize is called.
-    if (frameSizeUpdatesDisabled())
-        return;
+    [m_view layer].backgroundColor = drawsBackground() ? [backgroundColor() CGColor] : CGColorGetConstantColor(kCGColorClear);
 }
 
 void WebViewImpl::drawRect(CGRect rect)
@@ -1678,7 +1835,7 @@ void WebViewImpl::setTopContentInset(CGFloat contentInset)
 
     m_didScheduleSetTopContentInset = true;
 
-    auto weakThis = createWeakPtr();
+    auto weakThis = makeWeakPtr(*this);
     dispatch_async(dispatch_get_main_queue(), [weakThis] {
         if (!weakThis)
             return;
@@ -1711,7 +1868,7 @@ void WebViewImpl::updateViewExposedRect()
         exposedRect = CGRectUnion(m_contentPreparationRect, exposedRect);
 
     if (auto drawingArea = m_page->drawingArea())
-        drawingArea->setViewExposedRect(m_clipsToVisibleRect ? std::optional<WebCore::FloatRect>(exposedRect) : std::nullopt);
+        drawingArea->setViewExposedRect(m_clipsToVisibleRect ? Optional<WebCore::FloatRect>(exposedRect) : WTF::nullopt);
 }
 
 void WebViewImpl::setClipsToVisibleRect(bool clipsToVisibleRect)
@@ -1724,7 +1881,7 @@ void WebViewImpl::setMinimumSizeForAutoLayout(CGSize minimumSizeForAutoLayout)
 {
     bool expandsToFit = minimumSizeForAutoLayout.width > 0;
 
-    m_page->setMinimumLayoutSize(WebCore::IntSize(minimumSizeForAutoLayout));
+    m_page->setViewLayoutSize(WebCore::IntSize(minimumSizeForAutoLayout));
     m_page->setMainFrameIsScrollable(!expandsToFit);
 
     setClipsToVisibleRect(expandsToFit);
@@ -1732,7 +1889,7 @@ void WebViewImpl::setMinimumSizeForAutoLayout(CGSize minimumSizeForAutoLayout)
 
 CGSize WebViewImpl::minimumSizeForAutoLayout() const
 {
-    return m_page->minimumLayoutSize();
+    return m_page->viewLayoutSize();
 }
 
 void WebViewImpl::setShouldExpandToViewHeightForAutoLayout(bool shouldExpandToViewHeightForAutoLayout)
@@ -1752,7 +1909,7 @@ void WebViewImpl::setIntrinsicContentSize(CGSize intrinsicContentSize)
     // so that autolayout will know to provide space for us.
 
     CGSize intrinsicContentSizeAcknowledgingFlexibleWidth = intrinsicContentSize;
-    if (intrinsicContentSize.width < m_page->minimumLayoutSize().width())
+    if (intrinsicContentSize.width < m_page->viewLayoutSize().width())
         intrinsicContentSizeAcknowledgingFlexibleWidth.width = NSViewNoIntrinsicMetric;
 
     m_intrinsicContentSize = intrinsicContentSizeAcknowledgingFlexibleWidth;
@@ -1770,9 +1927,6 @@ void WebViewImpl::setViewScale(CGFloat viewScale)
 
     if (!supportsArbitraryLayoutModes() && viewScale != 1)
         return;
-
-    if (viewScale <= 0 || isnan(viewScale) || isinf(viewScale))
-        [NSException raise:NSInvalidArgumentException format:@"View scale should be a positive number"];
 
     m_page->scaleView(viewScale);
     [m_layoutStrategy didChangeViewScale];
@@ -1860,12 +2014,14 @@ float WebViewImpl::intrinsicDeviceScaleFactor() const
 
 void WebViewImpl::windowDidOrderOffScreen()
 {
-    m_page->activityStateDidChange(WebCore::ActivityState::IsVisible | WebCore::ActivityState::WindowIsActive);
+    LOG(ActivityState, "WebViewImpl %p (page %llu) windowDidOrderOffScreen", this, m_page->pageID().toUInt64());
+    m_page->activityStateDidChange({ WebCore::ActivityState::IsVisible, WebCore::ActivityState::WindowIsActive });
 }
 
 void WebViewImpl::windowDidOrderOnScreen()
 {
-    m_page->activityStateDidChange(WebCore::ActivityState::IsVisible | WebCore::ActivityState::WindowIsActive);
+    LOG(ActivityState, "WebViewImpl %p (page %llu) windowDidOrderOnScreen", this, m_page->pageID().toUInt64());
+    m_page->activityStateDidChange({ WebCore::ActivityState::IsVisible, WebCore::ActivityState::WindowIsActive });
 }
 
 void WebViewImpl::windowDidBecomeKey(NSWindow *keyWindow)
@@ -1932,6 +2088,7 @@ void WebViewImpl::windowDidChangeLayerHosting()
 
 void WebViewImpl::windowDidChangeOcclusionState()
 {
+    LOG(ActivityState, "WebViewImpl %p (page %llu) windowDidChangeOcclusionState", this, m_page->pageID().toUInt64());
     m_page->activityStateDidChange(WebCore::ActivityState::IsVisible);
 }
 
@@ -1968,7 +2125,8 @@ bool WebViewImpl::acceptsFirstMouse(NSEvent *event)
     // There's a chance that responding to this event will run a nested event loop, and
     // fetching a new event might release the old one. Retaining and then autoreleasing
     // the current event prevents that from causing a problem inside WebKit or AppKit code.
-    [[event retain] autorelease];
+    CFRetain((__bridge CFTypeRef)event);
+    CFAutorelease((__bridge CFTypeRef)event);
 
     if (![m_view hitTest:event.locationInWindow])
         return false;
@@ -1987,7 +2145,8 @@ bool WebViewImpl::shouldDelayWindowOrderingForEvent(NSEvent *event)
     // There's a chance that responding to this event will run a nested event loop, and
     // fetching a new event might release the old one. Retaining and then autoreleasing
     // the current event prevents that from causing a problem inside WebKit or AppKit code.
-    [[event retain] autorelease];
+    CFRetain((__bridge CFTypeRef)event);
+    CFAutorelease((__bridge CFTypeRef)event);
 
     if (![m_view hitTest:event.locationInWindow])
         return false;
@@ -2025,14 +2184,16 @@ void WebViewImpl::viewDidMoveToWindow()
 {
     NSWindow *window = m_targetWindowForMovePreparation ? m_targetWindowForMovePreparation : [m_view window];
 
+    LOG(ActivityState, "WebViewImpl %p viewDidMoveToWindow %p", this, window);
+
     if (window) {
         windowDidChangeScreen();
 
-        WebCore::ActivityState::Flags activityStateChanges = WebCore::ActivityState::WindowIsActive | WebCore::ActivityState::IsVisible;
+        OptionSet<WebCore::ActivityState::Flag> activityStateChanges { WebCore::ActivityState::WindowIsActive, WebCore::ActivityState::IsVisible };
         if (m_shouldDeferViewInWindowChanges)
             m_viewInWindowChangeWasDeferred = true;
         else
-            activityStateChanges |= WebCore::ActivityState::IsInWindow;
+            activityStateChanges.add(WebCore::ActivityState::IsInWindow);
         m_page->activityStateDidChange(activityStateChanges);
 
         updateWindowAndViewFrames();
@@ -2041,7 +2202,7 @@ void WebViewImpl::viewDidMoveToWindow()
         m_page->layerHostingModeDidChange();
 
         if (!m_flagsChangedEventMonitor) {
-            auto weakThis = createWeakPtr();
+            auto weakThis = makeWeakPtr(*this);
             m_flagsChangedEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:[weakThis] (NSEvent *flagsChangedEvent) {
                 if (weakThis)
                     weakThis->postFakeMouseMovedEventForFlagsChangedEvent(flagsChangedEvent);
@@ -2054,11 +2215,11 @@ void WebViewImpl::viewDidMoveToWindow()
         if (m_immediateActionGestureRecognizer && ![[m_view gestureRecognizers] containsObject:m_immediateActionGestureRecognizer.get()] && !m_ignoresNonWheelEvents && m_allowsLinkPreview)
             [m_view addGestureRecognizer:m_immediateActionGestureRecognizer.get()];
     } else {
-        WebCore::ActivityState::Flags activityStateChanges = WebCore::ActivityState::WindowIsActive | WebCore::ActivityState::IsVisible;
+        OptionSet<WebCore::ActivityState::Flag> activityStateChanges { WebCore::ActivityState::WindowIsActive, WebCore::ActivityState::IsVisible };
         if (m_shouldDeferViewInWindowChanges)
             m_viewInWindowChangeWasDeferred = true;
         else
-            activityStateChanges |= WebCore::ActivityState::IsInWindow;
+            activityStateChanges.add(WebCore::ActivityState::IsInWindow);
         m_page->activityStateDidChange(activityStateChanges);
 
         [NSEvent removeMonitor:m_flagsChangedEventMonitor];
@@ -2074,6 +2235,7 @@ void WebViewImpl::viewDidMoveToWindow()
     }
 
     m_page->setIntrinsicDeviceScaleFactor(intrinsicDeviceScaleFactor());
+    m_page->webViewDidMoveToWindow();
 }
 
 void WebViewImpl::viewDidChangeBackingProperties()
@@ -2089,16 +2251,19 @@ void WebViewImpl::viewDidChangeBackingProperties()
 
 void WebViewImpl::viewDidHide()
 {
+    LOG(ActivityState, "WebViewImpl %p (page %llu) viewDidHide", this, m_page->pageID().toUInt64());
     m_page->activityStateDidChange(WebCore::ActivityState::IsVisible);
 }
 
 void WebViewImpl::viewDidUnhide()
 {
+    LOG(ActivityState, "WebViewImpl %p (page %llu) viewDidUnhide", this, m_page->pageID().toUInt64());
     m_page->activityStateDidChange(WebCore::ActivityState::IsVisible);
 }
 
 void WebViewImpl::activeSpaceDidChange()
 {
+    LOG(ActivityState, "WebViewImpl %p (page %llu) activeSpaceDidChange", this, m_page->pageID().toUInt64());
     m_page->activityStateDidChange(WebCore::ActivityState::IsVisible);
 }
 
@@ -2160,12 +2325,12 @@ NSColor *WebViewImpl::pageExtendedBackgroundColor() const
     return WebCore::nsColor(color);
 }
 
-void WebViewImpl::setOverlayScrollbarStyle(std::optional<WebCore::ScrollbarOverlayStyle> scrollbarStyle)
+void WebViewImpl::setOverlayScrollbarStyle(Optional<WebCore::ScrollbarOverlayStyle> scrollbarStyle)
 {
     m_page->setOverlayScrollbarStyle(scrollbarStyle);
 }
 
-std::optional<WebCore::ScrollbarOverlayStyle> WebViewImpl::overlayScrollbarStyle() const
+Optional<WebCore::ScrollbarOverlayStyle> WebViewImpl::overlayScrollbarStyle() const
 {
     return m_page->overlayScrollbarStyle();
 }
@@ -2221,14 +2386,14 @@ void WebViewImpl::prepareForMoveToWindow(NSWindow *targetWindow, WTF::Function<v
 
     m_shouldDeferViewInWindowChanges = false;
 
-    auto weakThis = createWeakPtr();
+    auto weakThis = makeWeakPtr(*this);
     m_page->installActivityStateChangeCompletionHandler([weakThis, completionHandler = WTFMove(completionHandler)]() {
         completionHandler();
 
         if (!weakThis)
             return;
 
-        ASSERT([weakThis->m_view window] == weakThis->m_targetWindowForMovePreparation);
+        ASSERT(![weakThis->m_view window] || [weakThis->m_view window] == weakThis->m_targetWindowForMovePreparation);
         weakThis->m_targetWindowForMovePreparation = nil;
     });
 
@@ -2358,6 +2523,7 @@ bool WebViewImpl::tryHandlePluginComplexTextInputKeyDown(NSEvent *event)
 
 void WebViewImpl::pluginFocusOrWindowFocusChanged(bool pluginHasFocusAndWindowHasFocus, uint64_t pluginComplexTextInputIdentifier)
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     BOOL inputSourceChanged = m_pluginComplexTextInputIdentifier;
 
     if (pluginHasFocusAndWindowHasFocus) {
@@ -2411,7 +2577,6 @@ NSInteger WebViewImpl::spellCheckerDocumentTag()
 
 void WebViewImpl::pressureChangeWithEvent(NSEvent *event)
 {
-#if defined(__LP64__)
     if (event == m_lastPressureEvent)
         return;
 
@@ -2425,7 +2590,6 @@ void WebViewImpl::pressureChangeWithEvent(NSEvent *event)
     m_page->handleMouseEvent(webEvent);
 
     m_lastPressureEvent = event;
-#endif
 }
 
 #if ENABLE(FULLSCREEN_API)
@@ -2464,7 +2628,7 @@ NSView *WebViewImpl::fullScreenPlaceholderView()
 NSWindow *WebViewImpl::fullScreenWindow()
 {
 #if ENABLE(FULLSCREEN_API)
-    return [[[WebCoreFullScreenWindow alloc] initWithContentRect:[[NSScreen mainScreen] frame] styleMask:(NSWindowStyleMaskBorderless | NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO] autorelease];
+    return [[[WebCoreFullScreenWindow alloc] initWithContentRect:[[NSScreen mainScreen] frame] styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskUnifiedTitleAndToolbar | NSWindowStyleMaskFullSizeContentView | NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO] autorelease];
 #else
     return nil;
 #endif
@@ -2489,15 +2653,16 @@ static const SelectorNameMap& selectorExceptionMap()
     };
 
     static const SelectorAndCommandName names[] = {
-        { @selector(insertNewlineIgnoringFieldEditor:), ASCIILiteral("InsertNewline") },
-        { @selector(insertParagraphSeparator:), ASCIILiteral("InsertNewline") },
-        { @selector(insertTabIgnoringFieldEditor:), ASCIILiteral("InsertTab") },
-        { @selector(pageDown:), ASCIILiteral("MovePageDown") },
-        { @selector(pageDownAndModifySelection:), ASCIILiteral("MovePageDownAndModifySelection") },
-        { @selector(pageUp:), ASCIILiteral("MovePageUp") },
-        { @selector(pageUpAndModifySelection:), ASCIILiteral("MovePageUpAndModifySelection") },
-        { @selector(scrollPageDown:), ASCIILiteral("ScrollPageForward") },
-        { @selector(scrollPageUp:), ASCIILiteral("ScrollPageBackward") }
+        { @selector(insertNewlineIgnoringFieldEditor:), "InsertNewline"_s },
+        { @selector(insertParagraphSeparator:), "InsertNewline"_s },
+        { @selector(insertTabIgnoringFieldEditor:), "InsertTab"_s },
+        { @selector(pageDown:), "MovePageDown"_s },
+        { @selector(pageDownAndModifySelection:), "MovePageDownAndModifySelection"_s },
+        { @selector(pageUp:), "MovePageUp"_s },
+        { @selector(pageUpAndModifySelection:), "MovePageUpAndModifySelection"_s },
+        { @selector(scrollPageDown:), "ScrollPageForward"_s },
+        { @selector(scrollPageUp:), "ScrollPageBackward"_s },
+        { @selector(_pasteAsQuotation:), "PasteAsQuotation"_s },
     };
 
     for (auto& name : names)
@@ -2540,13 +2705,13 @@ void WebViewImpl::executeEditCommandForSelector(SEL selector, const String& argu
     m_page->executeEditCommand(commandNameForSelector(selector), argument);
 }
 
-void WebViewImpl::registerEditCommand(Ref<WebEditCommandProxy>&& command, WebPageProxy::UndoOrRedo undoOrRedo)
+void WebViewImpl::registerEditCommand(Ref<WebEditCommandProxy>&& command, UndoOrRedo undoOrRedo)
 {
-    RetainPtr<WKEditCommandObjC> commandObjC = adoptNS([[WKEditCommandObjC alloc] initWithWebEditCommandProxy:command.ptr()]);
-    String actionName = WebEditCommandProxy::nameForEditAction(command->editAction());
+    auto actionName = command->label();
+    auto commandObjC = adoptNS([[WKEditCommand alloc] initWithWebEditCommandProxy:WTFMove(command)]);
 
     NSUndoManager *undoManager = [m_view undoManager];
-    [undoManager registerUndoWithTarget:m_undoTarget.get() selector:((undoOrRedo == WebPageProxy::Undo) ? @selector(undoEditing:) : @selector(redoEditing:)) object:commandObjC.get()];
+    [undoManager registerUndoWithTarget:m_undoTarget.get() selector:((undoOrRedo == UndoOrRedo::Undo) ? @selector(undoEditing:) : @selector(redoEditing:)) object:commandObjC.get()];
     if (!actionName.isEmpty())
         [undoManager setActionName:(NSString *)actionName];
 }
@@ -2607,7 +2772,7 @@ void WebViewImpl::centerSelectionInVisibleArea()
 
 void WebViewImpl::selectionDidChange()
 {
-    updateFontPanelIfNeeded();
+    updateFontManagerIfNeeded();
     if (!m_isHandlingAcceptedCandidate)
         m_softSpaceRange = NSMakeRange(NSNotFound, 0);
 #if HAVE(TOUCH_BAR)
@@ -2616,7 +2781,34 @@ void WebViewImpl::selectionDidChange()
         requestCandidatesForSelectionIfNeeded();
 #endif
 
+    NSWindow *window = [m_view window];
+    if (window.firstResponder == m_view.get().get()) {
+        NSInspectorBar *inspectorBar = window.inspectorBar;
+        if (inspectorBar.visible)
+            [inspectorBar _update];
+    }
+
     [m_view _web_editorStateDidChange];
+}
+
+void WebViewImpl::showShareSheet(const WebCore::ShareDataWithParsedURL& data, WTF::CompletionHandler<void(bool)>&& completionHandler, WKWebView *view)
+{
+    if (_shareSheet)
+        [_shareSheet dismiss];
+    
+    ASSERT([view respondsToSelector:@selector(shareSheetDidDismiss:)]);
+    _shareSheet = adoptNS([[WKShareSheet alloc] initWithView:view]);
+    [_shareSheet setDelegate:view];
+    
+    [_shareSheet presentWithParameters:data inRect:WTF::nullopt completionHandler:WTFMove(completionHandler)];
+}
+    
+void WebViewImpl::shareSheetDidDismiss(WKShareSheet *shareSheet)
+{
+    ASSERT(_shareSheet == shareSheet);
+    
+    [_shareSheet setDelegate:nil];
+    _shareSheet = nil;
 }
 
 void WebViewImpl::didBecomeEditable()
@@ -2628,27 +2820,87 @@ void WebViewImpl::didBecomeEditable()
     });
 }
 
-void WebViewImpl::updateFontPanelIfNeeded()
+void WebViewImpl::updateFontManagerIfNeeded()
 {
-    const EditorState& editorState = m_page->editorState();
-    if (editorState.selectionIsNone || !editorState.isContentEditable)
+    BOOL fontPanelIsVisible = NSFontPanel.sharedFontPanelExists && NSFontPanel.sharedFontPanel.visible;
+    if (!fontPanelIsVisible && !m_page->editorState().isContentRichlyEditable)
         return;
-    if ([NSFontPanel sharedFontPanelExists] && [[NSFontPanel sharedFontPanel] isVisible]) {
-        m_page->fontAtSelection([](const String& fontName, double fontSize, bool selectionHasMultipleFonts, WebKit::CallbackBase::Error error) {
-            NSFont *font = [NSFont fontWithName:fontName size:fontSize];
-            if (font)
-                [[NSFontManager sharedFontManager] setSelectedFont:font isMultiple:selectionHasMultipleFonts];
-        });
-    }
+
+    m_page->fontAtSelection([](const FontInfo& fontInfo, double fontSize, bool selectionHasMultipleFonts, CallbackBase::Error error) {
+        if (error != CallbackBase::Error::None)
+            return;
+
+        NSDictionary *attributeDictionary = (__bridge NSDictionary *)fontInfo.fontAttributeDictionary.get();
+        if (!attributeDictionary)
+            return;
+
+        NSFontDescriptor *descriptor = [NSFontDescriptor fontDescriptorWithFontAttributes:attributeDictionary];
+        if (!descriptor)
+            return;
+
+        NSFont *font = [NSFont fontWithDescriptor:descriptor size:fontSize];
+        if (!font)
+            return;
+
+        [NSFontManager.sharedFontManager setSelectedFont:font isMultiple:selectionHasMultipleFonts];
+    });
 }
 
-void WebViewImpl::changeFontFromFontPanel()
+void WebViewImpl::typingAttributesWithCompletionHandler(void(^completion)(NSDictionary<NSString *, id> *))
 {
-    NSFontManager *fontManager = [NSFontManager sharedFontManager];
-    NSFont *font = [fontManager convertFont:fontManager.selectedFont];
-    if (!font)
+    if (auto attributes = m_page->cachedFontAttributesAtSelectionStart()) {
+        auto attributesAsDictionary = attributes->createDictionary();
+        completion(attributesAsDictionary.get());
         return;
-    m_page->setFont(font.familyName, font.pointSize, font.fontDescriptor.symbolicTraits);
+    }
+
+    m_page->requestFontAttributesAtSelectionStart([completion = makeBlockPtr(completion)] (const WebCore::FontAttributes& attributes, CallbackBase::Error error) {
+        if (error != CallbackBase::Error::None) {
+            completion(nil);
+            return;
+        }
+
+        auto attributesAsDictionary = attributes.createDictionary();
+        completion(attributesAsDictionary.get());
+    });
+}
+
+void WebViewImpl::changeFontColorFromSender(id sender)
+{
+    if (![sender respondsToSelector:@selector(color)])
+        return;
+
+    id color = [sender color];
+    if (![color isKindOfClass:NSColor.class])
+        return;
+
+    auto& editorState = m_page->editorState();
+    if (!editorState.isContentEditable || editorState.selectionIsNone)
+        return;
+
+    WebCore::FontAttributeChanges changes;
+    changes.setForegroundColor(WebCore::colorFromNSColor((NSColor *)color));
+    m_page->changeFontAttributes(WTFMove(changes));
+}
+
+void WebViewImpl::changeFontAttributesFromSender(id sender)
+{
+    auto& editorState = m_page->editorState();
+    if (!editorState.isContentEditable || editorState.selectionIsNone)
+        return;
+
+    m_page->changeFontAttributes(WebCore::computedFontAttributeChanges(NSFontManager.sharedFontManager, sender));
+    updateFontManagerIfNeeded();
+}
+
+void WebViewImpl::changeFontFromFontManager()
+{
+    auto& editorState = m_page->editorState();
+    if (!editorState.isContentEditable || editorState.selectionIsNone)
+        return;
+
+    m_page->changeFont(WebCore::computedFontChanges(NSFontManager.sharedFontManager));
+    updateFontManagerIfNeeded();
 }
 
 static NSMenuItem *menuItem(id <NSValidatedUserInterfaceItem> item)
@@ -2667,6 +2919,7 @@ static NSToolbarItem *toolbarItem(id <NSValidatedUserInterfaceItem> item)
 
 bool WebViewImpl::validateUserInterfaceItem(id <NSValidatedUserInterfaceItem> item)
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     SEL action = [item action];
 
     if (action == @selector(showGuessPanel:)) {
@@ -2756,7 +3009,7 @@ bool WebViewImpl::validateUserInterfaceItem(id <NSValidatedUserInterfaceItem> it
         // If we are not already awaiting validation for this command, start the asynchronous validation process.
         // FIXME: Theoretically, there is a race here; when we get the answer it might be old, from a previous time
         // we asked for the same command; there is no guarantee the answer is still valid.
-        auto weakThis = createWeakPtr();
+        auto weakThis = makeWeakPtr(*this);
         m_page->validateCommand(commandName, [weakThis](const String& commandName, bool isEnabled, int32_t state, WebKit::CallbackBase::Error error) {
             if (!weakThis)
                 return;
@@ -2788,6 +3041,7 @@ void WebViewImpl::setUserInterfaceItemState(NSString *commandName, bool enabled,
 
 void WebViewImpl::startSpeaking()
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     m_page->getSelectionOrContentsAsString([](const String& string, WebKit::CallbackBase::Error error) {
         if (error != WebKit::CallbackBase::Error::None)
             return;
@@ -2800,6 +3054,7 @@ void WebViewImpl::startSpeaking()
 
 void WebViewImpl::stopSpeaking(id sender)
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     [NSApp stopSpeaking:sender];
 }
 
@@ -2986,7 +3241,6 @@ void WebViewImpl::capitalizeWord()
     m_page->capitalizeWord();
 }
 
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 101200
 void WebViewImpl::requestCandidatesForSelectionIfNeeded()
 {
     if (!shouldRequestCandidates())
@@ -3002,10 +3256,9 @@ void WebViewImpl::requestCandidatesForSelectionIfNeeded()
     auto& postLayoutData = editorState.postLayoutData();
     m_lastStringForCandidateRequest = postLayoutData.stringForCandidateRequest;
 
-#if HAVE(ADVANCED_SPELL_CHECKING)
     NSRange selectedRange = NSMakeRange(postLayoutData.candidateRequestStartPosition, postLayoutData.selectedTextLength);
     NSTextCheckingTypes checkingTypes = NSTextCheckingTypeSpelling | NSTextCheckingTypeReplacement | NSTextCheckingTypeCorrection;
-    auto weakThis = createWeakPtr();
+    auto weakThis = makeWeakPtr(*this);
     m_lastCandidateRequestSequenceNumber = [[NSSpellChecker sharedSpellChecker] requestCandidatesForSelectedRange:selectedRange inString:postLayoutData.paragraphContextForCandidateRequest types:checkingTypes options:nil inSpellDocumentWithTag:spellCheckerDocumentTag() completionHandler:[weakThis](NSInteger sequenceNumber, NSArray<NSTextCheckingResult *> *candidates) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!weakThis)
@@ -3013,7 +3266,6 @@ void WebViewImpl::requestCandidatesForSelectionIfNeeded()
             weakThis->handleRequestedCandidates(sequenceNumber, candidates);
         });
     }];
-#endif // HAVE(ADVANCED_SPELL_CHECKING)
 }
 
 void WebViewImpl::handleRequestedCandidates(NSInteger sequenceNumber, NSArray<NSTextCheckingResult *> *candidates)
@@ -3039,7 +3291,7 @@ void WebViewImpl::handleRequestedCandidates(NSInteger sequenceNumber, NSArray<NS
 
 #if HAVE(TOUCH_BAR)
     NSRange selectedRange = NSMakeRange(postLayoutData.candidateRequestStartPosition, postLayoutData.selectedTextLength);
-    WebCore::IntRect offsetSelectionRect = postLayoutData.selectionClipRect;
+    WebCore::IntRect offsetSelectionRect = postLayoutData.focusedElementRect;
     offsetSelectionRect.move(0, offsetSelectionRect.height());
 
     [candidateListTouchBarItem() setCandidates:candidates forSelectedRange:selectedRange inString:postLayoutData.paragraphContextForCandidateRequest rect:offsetSelectionRect view:m_view.getAutoreleased() completionHandler:nil];
@@ -3048,31 +3300,29 @@ void WebViewImpl::handleRequestedCandidates(NSInteger sequenceNumber, NSArray<NS
 #endif
 }
 
+static constexpr WebCore::TextCheckingType coreTextCheckingType(NSTextCheckingType type)
+{
+    switch (type) {
+    case NSTextCheckingTypeCorrection:
+        return WebCore::TextCheckingType::Correction;
+    case NSTextCheckingTypeReplacement:
+        return WebCore::TextCheckingType::Replacement;
+    case NSTextCheckingTypeSpelling:
+        return WebCore::TextCheckingType::Spelling;
+    default:
+        return WebCore::TextCheckingType::None;
+    }
+}
+
 static WebCore::TextCheckingResult textCheckingResultFromNSTextCheckingResult(NSTextCheckingResult *nsResult)
 {
-    WebCore::TextCheckingResult result;
-
-    // FIXME: Right now we only request candidates for spelling, replacement, and correction, but we plan to
-    // support more types, and we will have to update this at that time.
-    switch ([nsResult resultType]) {
-    case NSTextCheckingTypeSpelling:
-        result.type = WebCore::TextCheckingTypeSpelling;
-        break;
-    case NSTextCheckingTypeReplacement:
-        result.type = WebCore::TextCheckingTypeReplacement;
-        break;
-    case NSTextCheckingTypeCorrection:
-        result.type = WebCore::TextCheckingTypeCorrection;
-        break;
-    default:
-        result.type = WebCore::TextCheckingTypeNone;
-    }
-
     NSRange resultRange = [nsResult range];
+
+    WebCore::TextCheckingResult result;
+    result.type = coreTextCheckingType(nsResult.resultType);
     result.location = resultRange.location;
     result.length = resultRange.length;
-    result.replacement = [nsResult replacementString];
-
+    result.replacement = nsResult.replacementString;
     return result;
 }
 
@@ -3102,7 +3352,29 @@ void WebViewImpl::handleAcceptedCandidate(NSTextCheckingResult *acceptedCandidat
 
     m_page->handleAcceptedCandidate(textCheckingResultFromNSTextCheckingResult(acceptedCandidate));
 }
-#endif // __MAC_OS_X_VERSION_MIN_REQUIRED >= 101200
+
+void WebViewImpl::doAfterProcessingAllPendingMouseEvents(dispatch_block_t action)
+{
+    if (!m_page->isProcessingMouseEvents()) {
+        action();
+        return;
+    }
+
+    m_callbackHandlersAfterProcessingPendingMouseEvents.append(makeBlockPtr(action));
+}
+
+void WebViewImpl::didFinishProcessingAllPendingMouseEvents()
+{
+    flushPendingMouseEventCallbacks();
+}
+
+void WebViewImpl::flushPendingMouseEventCallbacks()
+{
+    for (auto& callback : m_callbackHandlersAfterProcessingPendingMouseEvents)
+        callback();
+
+    m_callbackHandlersAfterProcessingPendingMouseEvents.clear();
+}
 
 void WebViewImpl::preferencesDidChange()
 {
@@ -3193,12 +3465,7 @@ void WebViewImpl::quickLookWithEvent(NSEvent *event)
 
 void WebViewImpl::prepareForDictionaryLookup()
 {
-    if (m_didRegisterForLookupPopoverCloseNotifications)
-        return;
-
-    m_didRegisterForLookupPopoverCloseNotifications = true;
-
-    [m_windowVisibilityObserver startObservingLookupDismissal];
+    [m_windowVisibilityObserver startObservingLookupDismissalIfNeeded];
 }
 
 void WebViewImpl::setAllowsLinkPreview(bool allowsLinkPreview)
@@ -3214,7 +3481,7 @@ void WebViewImpl::setAllowsLinkPreview(bool allowsLinkPreview)
         [m_view addGestureRecognizer:immediateActionRecognizer];
 }
 
-void* WebViewImpl::immediateActionAnimationControllerForHitTestResult(API::HitTestResult* hitTestResult, uint32_t type, API::Object* userData)
+NSObject *WebViewImpl::immediateActionAnimationControllerForHitTestResult(API::HitTestResult* hitTestResult, uint32_t type, API::Object* userData)
 {
     return [m_view _web_immediateActionAnimationControllerForHitTestResultInternal:hitTestResult withType:type userData:userData];
 }
@@ -3255,6 +3522,11 @@ void WebViewImpl::videoControlsManagerDidChange()
 {
 #if HAVE(TOUCH_BAR)
     updateTouchBar();
+#endif
+
+#if ENABLE(FULLSCREEN_API)
+    if (hasFullScreenWindowController())
+        [fullScreenWindowController() videoControlsManagerDidChange];
 #endif
 }
 
@@ -3344,7 +3616,7 @@ void WebViewImpl::enableAccessibilityIfNecessary()
     updateWindowAndViewFrames();
 }
 
-id WebViewImpl::accessibilityAttributeValue(NSString *attribute)
+id WebViewImpl::accessibilityAttributeValue(NSString *attribute, id parameter)
 {
     enableAccessibilityIfNecessary();
 
@@ -3366,6 +3638,13 @@ id WebViewImpl::accessibilityAttributeValue(NSString *attribute)
             return NSAccessibilityUnignoredAncestor([m_view superview]);
             if ([attribute isEqualToString:NSAccessibilityEnabledAttribute])
                 return @YES;
+    
+    if ([attribute isEqualToString:@"AXConvertRelativeFrame"]) {
+        if ([parameter isKindOfClass:[NSValue class]]) {
+            NSRect rect = [(NSValue *)parameter rectValue];
+            return [NSValue valueWithRect:m_pageClient->rootViewToScreen(WebCore::IntRect(rect))];
+        }
+    }
     
     return [m_view _web_superAccessibilityAttributeValue:attribute];
 }
@@ -3494,48 +3773,19 @@ void WebViewImpl::setAcceleratedCompositingRootLayer(CALayer *rootLayer)
 
     m_rootLayer = rootLayer;
 
-#if WK_API_ENABLED
     if (m_thumbnailView) {
         updateThumbnailViewLayer();
         return;
     }
-#endif
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
 
-    if (rootLayer) {
-        if (!m_layerHostingView) {
-            // Create an NSView that will host our layer tree.
-            m_layerHostingView = adoptNS([[WKFlippedView alloc] initWithFrame:[m_view bounds]]);
-            [m_layerHostingView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-
-            [m_view addSubview:m_layerHostingView.get() positioned:NSWindowBelow relativeTo:nil];
-
-            // Create a root layer that will back the NSView.
-            RetainPtr<CALayer> layer = adoptNS([[CALayer alloc] init]);
-            [layer setDelegate:[WebActionDisablingCALayerDelegate shared]];
-#ifndef NDEBUG
-            [layer setName:@"Hosting root layer"];
-#endif
-
-            [m_layerHostingView setLayer:layer.get()];
-            [m_layerHostingView setWantsLayer:YES];
-        }
-
-        [m_layerHostingView layer].sublayers = [NSArray arrayWithObject:rootLayer];
-    } else if (m_layerHostingView) {
-        [m_layerHostingView removeFromSuperview];
-        [m_layerHostingView setLayer:nil];
-        [m_layerHostingView setWantsLayer:NO];
-
-        m_layerHostingView = nullptr;
-    }
+    [m_layerHostingView layer].sublayers = rootLayer ? @[ rootLayer ] : nil;
 
     [CATransaction commit];
 }
 
-#if WK_API_ENABLED
 void WebViewImpl::setThumbnailView(_WKThumbnailView *thumbnailView)
 {
     ASSERT(!m_thumbnailView || !thumbnailView);
@@ -3581,13 +3831,14 @@ NSView *WebViewImpl::inspectorAttachmentView()
 _WKRemoteObjectRegistry *WebViewImpl::remoteObjectRegistry()
 {
     if (!m_remoteObjectRegistry) {
-        m_remoteObjectRegistry = adoptNS([[_WKRemoteObjectRegistry alloc] _initWithMessageSender:m_page]);
+        m_remoteObjectRegistry = adoptNS([[_WKRemoteObjectRegistry alloc] _initWithWebPageProxy:m_page]);
         m_page->process().processPool().addMessageReceiver(Messages::RemoteObjectRegistry::messageReceiverName(), m_page->pageID(), [m_remoteObjectRegistry remoteObjectRegistry]);
     }
 
     return m_remoteObjectRegistry.get();
 }
 
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 WKBrowsingContextController *WebViewImpl::browsingContextController()
 {
     if (!m_browsingContextController)
@@ -3595,15 +3846,19 @@ WKBrowsingContextController *WebViewImpl::browsingContextController()
 
     return m_browsingContextController.get();
 }
-#endif // WK_API_ENABLED
+ALLOW_DEPRECATED_DECLARATIONS_END
 
 #if ENABLE(DRAG_SUPPORT)
-void WebViewImpl::draggedImage(NSImage *image, CGPoint endPoint, NSDragOperation operation)
+void WebViewImpl::draggedImage(NSImage *, CGPoint endPoint, NSDragOperation operation)
 {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    sendDragEndToPage(endPoint, operation);
+}
+
+void WebViewImpl::sendDragEndToPage(CGPoint endPoint, NSDragOperation operation)
+{
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     NSPoint windowImageLoc = [[m_view window] convertScreenToBase:NSPointFromCGPoint(endPoint)];
-#pragma clang diagnostic pop
+    ALLOW_DEPRECATED_DECLARATIONS_END
     NSPoint windowMouseLoc = windowImageLoc;
 
     // Prevent queued mouseDragged events from coming after the drag and fake mouseUp event.
@@ -3614,6 +3869,7 @@ void WebViewImpl::draggedImage(NSImage *image, CGPoint endPoint, NSDragOperation
 
 static WebCore::DragApplicationFlags applicationFlagsForDrag(NSView *view, id <NSDraggingInfo> draggingInfo)
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     uint32_t flags = 0;
     if ([NSApp modalWindow])
         flags = WebCore::DragApplicationIsModal;
@@ -3631,11 +3887,7 @@ NSDragOperation WebViewImpl::draggingEntered(id <NSDraggingInfo> draggingInfo)
 {
     WebCore::IntPoint client([m_view convertPoint:draggingInfo.draggingLocation fromView:nil]);
     WebCore::IntPoint global(WebCore::globalPoint(draggingInfo.draggingLocation, [m_view window]));
-#if WK_API_ENABLED
     auto dragDestinationAction = static_cast<WebCore::DragDestinationAction>([m_view _web_dragDestinationActionForDraggingInfo:draggingInfo]);
-#else
-    auto dragDestinationAction = WebCore::DragDestinationActionAny;
-#endif
     WebCore::DragData dragData(draggingInfo, client, global, static_cast<WebCore::DragOperation>(draggingInfo.draggingSourceOperationMask), applicationFlagsForDrag(m_view.getAutoreleased(), draggingInfo), dragDestinationAction);
 
     m_page->resetCurrentDragInformation();
@@ -3648,11 +3900,7 @@ NSDragOperation WebViewImpl::draggingUpdated(id <NSDraggingInfo> draggingInfo)
 {
     WebCore::IntPoint client([m_view convertPoint:draggingInfo.draggingLocation fromView:nil]);
     WebCore::IntPoint global(WebCore::globalPoint(draggingInfo.draggingLocation, [m_view window]));
-#if WK_API_ENABLED
     auto dragDestinationAction = static_cast<WebCore::DragDestinationAction>([m_view _web_dragDestinationActionForDraggingInfo:draggingInfo]);
-#else
-    auto dragDestinationAction = WebCore::DragDestinationActionAny;
-#endif
     WebCore::DragData dragData(draggingInfo, client, global, static_cast<WebCore::DragOperation>(draggingInfo.draggingSourceOperationMask), applicationFlagsForDrag(m_view.getAutoreleased(), draggingInfo), dragDestinationAction);
     m_page->dragUpdated(dragData, draggingInfo.draggingPasteboard.name);
 
@@ -3693,64 +3941,77 @@ bool WebViewImpl::performDragOperation(id <NSDraggingInfo> draggingInfo)
 {
     WebCore::IntPoint client([m_view convertPoint:draggingInfo.draggingLocation fromView:nil]);
     WebCore::IntPoint global(WebCore::globalPoint(draggingInfo.draggingLocation, [m_view window]));
-    WebCore::DragData dragData(draggingInfo, client, global, static_cast<WebCore::DragOperation>(draggingInfo.draggingSourceOperationMask), applicationFlagsForDrag(m_view.getAutoreleased(), draggingInfo));
+    WebCore::DragData *dragData = new WebCore::DragData(draggingInfo, client, global, static_cast<WebCore::DragOperation>(draggingInfo.draggingSourceOperationMask), applicationFlagsForDrag(m_view.getAutoreleased(), draggingInfo));
 
     NSArray *types = draggingInfo.draggingPasteboard.types;
     SandboxExtension::Handle sandboxExtensionHandle;
     SandboxExtension::HandleArray sandboxExtensionForUpload;
 
-    if ([types containsObject:WebCore::legacyFilenamesPasteboardType()]) {
-        NSArray *files = [draggingInfo.draggingPasteboard propertyListForType:WebCore::legacyFilenamesPasteboardType()];
-        if (![files isKindOfClass:[NSArray class]])
-            return false;
-
-        Vector<String> fileNames;
-
-        for (NSString *file in files)
-            fileNames.append(file);
-        m_page->createSandboxExtensionsIfNeeded(fileNames, sandboxExtensionHandle, sandboxExtensionForUpload);
-    }
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 101200
-    else if (![types containsObject:PasteboardTypes::WebArchivePboardType] && [types containsObject:WebCore::legacyFilesPromisePasteboardType()]) {
+    if (![types containsObject:PasteboardTypes::WebArchivePboardType] && [types containsObject:WebCore::legacyFilesPromisePasteboardType()]) {
         
         // FIXME: legacyFilesPromisePasteboardType() contains UTIs, not path names. Also, it's not
         // guaranteed that the count of UTIs equals the count of files, since some clients only write
         // unique UTIs.
         NSArray *files = [draggingInfo.draggingPasteboard propertyListForType:WebCore::legacyFilesPromisePasteboardType()];
-        if (![files isKindOfClass:[NSArray class]])
+        if (![files isKindOfClass:[NSArray class]]) {
+            delete dragData;
             return false;
+        }
+
+        NSString *dropDestinationPath = FileSystem::createTemporaryDirectory(@"WebKitDropDestination");
+        if (!dropDestinationPath) {
+            delete dragData;
+            return false;
+        }
+
         size_t fileCount = files.count;
-        Vector<String> fileNames;
-        NSURL *dropLocation = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
+        Vector<String> *fileNames = new Vector<String>;
+        NSURL *dropDestination = [NSURL fileURLWithPath:dropDestinationPath isDirectory:YES];
         String pasteboardName = draggingInfo.draggingPasteboard.name;
-        [draggingInfo enumerateDraggingItemsWithOptions:0 forView:m_view.getAutoreleased() classes:@[[NSFilePromiseReceiver class]] searchOptions:@{ } usingBlock:BlockPtr<void (NSDraggingItem *, NSInteger, BOOL *)>::fromCallable([this, fileNames = WTFMove(fileNames), dropLocation = retainPtr(dropLocation), fileCount, dragData = WTFMove(dragData), pasteboardName](NSDraggingItem * __nonnull draggingItem, NSInteger idx, BOOL * __nonnull stop) mutable {
+        [draggingInfo enumerateDraggingItemsWithOptions:0 forView:m_view.getAutoreleased() classes:@[[NSFilePromiseReceiver class]] searchOptions:@{ } usingBlock:^(NSDraggingItem *draggingItem, NSInteger idx, BOOL *stop) {
             NSFilePromiseReceiver *item = draggingItem.item;
             NSDictionary *options = @{ };
 
             RetainPtr<NSOperationQueue> queue = adoptNS([NSOperationQueue new]);
-            [item receivePromisedFilesAtDestination:dropLocation.get() options:options operationQueue:queue.get() reader:BlockPtr<void(NSURL *, NSError *)>::fromCallable([this, fileNames = WTFMove(fileNames), fileCount, dragData = WTFMove(dragData), pasteboardName](NSURL * _Nonnull fileURL, NSError * _Nullable errorOrNil) mutable {
+            [item receivePromisedFilesAtDestination:dropDestination options:options operationQueue:queue.get() reader:^(NSURL *fileURL, NSError *errorOrNil) {
                 if (errorOrNil)
                     return;
 
-                dispatch_async(dispatch_get_main_queue(), BlockPtr<void()>::fromCallable([this, path = retainPtr(fileURL.path), fileNames, fileCount, dragData = WTFMove(dragData), pasteboardName]() mutable {
-                    fileNames.append(path.get());
-                    if (fileNames.size() == fileCount) {
+                dispatch_async(dispatch_get_main_queue(), [this, path = RetainPtr<NSString>(fileURL.path), fileNames, fileCount, dragData, pasteboardName] {
+                    fileNames->append(path.get());
+                    if (fileNames->size() == fileCount) {
                         SandboxExtension::Handle sandboxExtensionHandle;
                         SandboxExtension::HandleArray sandboxExtensionForUpload;
 
-                        m_page->createSandboxExtensionsIfNeeded(fileNames, sandboxExtensionHandle, sandboxExtensionForUpload);
-                        dragData.setFileNames(fileNames);
-                        m_page->performDragOperation(dragData, pasteboardName, WTFMove(sandboxExtensionHandle), WTFMove(sandboxExtensionForUpload));
+                        m_page->createSandboxExtensionsIfNeeded(*fileNames, sandboxExtensionHandle, sandboxExtensionForUpload);
+                        dragData->setFileNames(*fileNames);
+                        m_page->performDragOperation(*dragData, pasteboardName, WTFMove(sandboxExtensionHandle), WTFMove(sandboxExtensionForUpload));
+                        delete dragData;
+                        delete fileNames;
                     }
-                }).get());
-            }).get()];
-        }).get()];
+                });
+            }];
+        }];
 
         return true;
     }
-#endif
 
-    m_page->performDragOperation(dragData, draggingInfo.draggingPasteboard.name, WTFMove(sandboxExtensionHandle), WTFMove(sandboxExtensionForUpload));
+    if ([types containsObject:WebCore::legacyFilenamesPasteboardType()]) {
+        NSArray *files = [draggingInfo.draggingPasteboard propertyListForType:WebCore::legacyFilenamesPasteboardType()];
+        if (![files isKindOfClass:[NSArray class]]) {
+            delete dragData;
+            return false;
+        }
+        
+        Vector<String> fileNames;
+        
+        for (NSString *file in files)
+            fileNames.append(file);
+        m_page->createSandboxExtensionsIfNeeded(fileNames, sandboxExtensionHandle, sandboxExtensionForUpload);
+    }
+
+    m_page->performDragOperation(*dragData, draggingInfo.draggingPasteboard.name, WTFMove(sandboxExtensionHandle), WTFMove(sandboxExtensionForUpload));
+    delete dragData;
 
     return true;
 }
@@ -3773,10 +4034,63 @@ void WebViewImpl::registerDraggedTypes()
     [m_view registerForDraggedTypes:[types allObjects]];
 }
 
-void WebViewImpl::prepareToDragPromisedBlob(const WebCore::PromisedBlobInfo& info)
+NSString *WebViewImpl::fileNameForFilePromiseProvider(NSFilePromiseProvider *provider, NSString *)
 {
-    // FIXME: Add macOS support for dragging promised blob data as file promises.
-    UNUSED_PARAM(info);
+    id userInfo = provider.userInfo;
+    if (![userInfo isKindOfClass:[WKPromisedAttachmentContext class]])
+        return nil;
+
+    return [(WKPromisedAttachmentContext *)userInfo fileName];
+}
+
+static NSError *webKitUnknownError()
+{
+    return [NSError errorWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:nil];
+}
+
+void WebViewImpl::didPerformDragOperation(bool handled)
+{
+    [m_view _web_didPerformDragOperation:handled];
+}
+
+void WebViewImpl::writeToURLForFilePromiseProvider(NSFilePromiseProvider *provider, NSURL *fileURL, void(^completionHandler)(NSError *))
+{
+    id userInfo = provider.userInfo;
+    if (![userInfo isKindOfClass:[WKPromisedAttachmentContext class]]) {
+        completionHandler(webKitUnknownError());
+        return;
+    }
+
+    WKPromisedAttachmentContext *info = (WKPromisedAttachmentContext *)userInfo;
+    auto attachment = m_page->attachmentForIdentifier(info.attachmentIdentifier);
+    if (NSFileWrapper *fileWrapper = attachment ? attachment->fileWrapper() : nil) {
+        NSError *attachmentWritingError = nil;
+        if ([fileWrapper writeToURL:fileURL options:0 originalContentsURL:nil error:&attachmentWritingError])
+            completionHandler(nil);
+        else
+            completionHandler(attachmentWritingError);
+        return;
+    }
+
+    URL blobURL { info.blobURL };
+    if (blobURL.isEmpty()) {
+        completionHandler(webKitUnknownError());
+        return;
+    }
+
+    completionHandler(webKitUnknownError());
+}
+
+NSDragOperation WebViewImpl::dragSourceOperationMask(NSDraggingSession *, NSDraggingContext context)
+{
+    if (context == NSDraggingContextOutsideApplication || m_page->currentDragIsOverFileInput())
+        return NSDragOperationCopy;
+    return NSDragOperationGeneric | NSDragOperationMove | NSDragOperationCopy;
+}
+
+void WebViewImpl::draggingSessionEnded(NSDraggingSession *, NSPoint endPoint, NSDragOperation operation)
+{
+    sendDragEndToPage(NSPointToCGPoint(endPoint), operation);
 }
 
 #endif // ENABLE(DRAG_SUPPORT)
@@ -3786,25 +4100,64 @@ void WebViewImpl::startWindowDrag()
     [[m_view window] performWindowDragWithEvent:m_lastMouseDownEvent.get()];
 }
 
-void WebViewImpl::dragImageForView(NSView *view, NSImage *image, CGPoint clientPoint, bool)
+void WebViewImpl::startDrag(const WebCore::DragItem& item, const ShareableBitmap::Handle& dragImageHandle)
 {
+    auto dragImageAsBitmap = ShareableBitmap::create(dragImageHandle);
+    if (!dragImageAsBitmap) {
+        m_page->dragCancelled();
+        return;
+    }
+
+    auto dragCGImage = dragImageAsBitmap->makeCGImage();
+    auto dragNSImage = adoptNS([[NSImage alloc] initWithCGImage:dragCGImage.get() size:dragImageAsBitmap->size()]);
+
+    WebCore::IntSize size([dragNSImage size]);
+    size.scale(1.0 / m_page->deviceScaleFactor());
+    [dragNSImage setSize:size];
+
     // The call below could release the view.
     auto protector = m_view.get();
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    auto clientDragLocation = item.dragLocationInWindowCoordinates;
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     NSPasteboard *pasteboard = [NSPasteboard pasteboardWithName:NSDragPboard];
-#pragma clang diagnostic pop
+    ALLOW_DEPRECATED_DECLARATIONS_END
+
+    if (auto& info = item.promisedAttachmentInfo) {
+        NSString *utiType = info.contentType;
+        NSString *fileName = info.fileName;
+        if (auto attachment = m_page->attachmentForIdentifier(info.attachmentIdentifier)) {
+            utiType = attachment->utiType();
+            fileName = attachment->fileName();
+        }
+
+        if (!utiType.length) {
+            m_page->dragCancelled();
+            return;
+        }
+
+        auto provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:utiType delegate:(id <NSFilePromiseProviderDelegate>)m_view.getAutoreleased()]);
+        auto context = adoptNS([[WKPromisedAttachmentContext alloc] initWithIdentifier:info.attachmentIdentifier blobURL:info.blobURL fileName:fileName]);
+        [provider setUserInfo:context.get()];
+        auto draggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
+        [draggingItem setDraggingFrame:NSMakeRect(clientDragLocation.x(), clientDragLocation.y() - size.height(), size.width(), size.height()) contents:dragNSImage.get()];
+        [m_view beginDraggingSessionWithItems:@[draggingItem.get()] event:m_lastMouseDownEvent.get() source:(id <NSDraggingSource>)m_view.getAutoreleased()];
+
+        ASSERT(info.additionalTypes.size() == info.additionalData.size());
+        if (info.additionalTypes.size() == info.additionalData.size()) {
+            for (size_t index = 0; index < info.additionalTypes.size(); ++index) {
+                auto nsData = info.additionalData[index]->createNSData();
+                [pasteboard setData:nsData.get() forType:info.additionalTypes[index]];
+            }
+        }
+        m_page->didStartDrag();
+        return;
+    }
+
     [pasteboard setString:@"" forType:PasteboardTypes::WebDummyPboardType];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    [view dragImage:image
-                 at:NSPointFromCGPoint(clientPoint)
-             offset:NSZeroSize
-              event:m_lastMouseDownEvent.get()
-         pasteboard:pasteboard
-             source:m_view.getAutoreleased()
-          slideBack:YES];
-#pragma clang diagnostic pop
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    [m_view dragImage:dragNSImage.get() at:NSPointFromCGPoint(clientDragLocation) offset:NSZeroSize event:m_lastMouseDownEvent.get() pasteboard:pasteboard source:m_view.getAutoreleased() slideBack:YES];
+    ALLOW_DEPRECATED_DECLARATIONS_END
+    m_page->didStartDrag();
 }
 
 static bool matchesExtensionOrEquivalent(const String& filename, const String& extension)
@@ -3842,21 +4195,23 @@ void WebViewImpl::setPromisedDataForImage(WebCore::Image* image, NSString *filen
     m_promisedImage = image;
 }
 
-void WebViewImpl::pasteboardChangedOwner(NSPasteboard *pasteboard)
+void WebViewImpl::clearPromisedDragImage()
 {
     m_promisedImage = nullptr;
+}
+
+void WebViewImpl::pasteboardChangedOwner(NSPasteboard *pasteboard)
+{
+    clearPromisedDragImage();
     m_promisedFilename = emptyString();
     m_promisedURL = emptyString();
 }
 
 void WebViewImpl::provideDataForPasteboard(NSPasteboard *pasteboard, NSString *type)
 {
-    // FIXME: need to support NSRTFDPboardType
-
-    if ([type isEqual:WebCore::legacyTIFFPasteboardType()] && m_promisedImage) {
-        [pasteboard setData:(NSData *)m_promisedImage->tiffRepresentation() forType:WebCore::legacyTIFFPasteboardType()];
-        m_promisedImage = nullptr;
-    }
+    // FIXME: Need to support NSRTFDPboardType.
+    if ([type isEqual:WebCore::legacyTIFFPasteboardType()] && m_promisedImage)
+        [pasteboard setData:(__bridge NSData *)m_promisedImage->tiffRepresentation() forType:WebCore::legacyTIFFPasteboardType()];
 }
 
 static BOOL fileExists(NSString *path)
@@ -3918,11 +4273,11 @@ NSArray *WebViewImpl::namesOfPromisedFilesDroppedAtDestination(NSURL *dropDestin
     // FIXME: Report an error if we fail to create a file.
     NSString *path = [[dropDestination path] stringByAppendingPathComponent:[wrapper preferredFilename]];
     path = pathWithUniqueFilenameForPath(path);
-    if (![wrapper writeToURL:[NSURL fileURLWithPath:path] options:NSFileWrapperWritingWithNameUpdating originalContentsURL:nil error:nullptr])
+    if (![wrapper writeToURL:[NSURL fileURLWithPath:path isDirectory:NO] options:NSFileWrapperWritingWithNameUpdating originalContentsURL:nil error:nullptr])
         LOG_ERROR("Failed to create image file via -[NSFileWrapper writeToURL:options:originalContentsURL:error:]");
 
     if (!m_promisedURL.isEmpty())
-        WebCore::FileSystem::setMetadataURL(String(path), m_promisedURL);
+        FileSystem::setMetadataURL(String(path), m_promisedURL);
     
     return [NSArray arrayWithObject:[path lastPathComponent]];
 }
@@ -3992,10 +4347,10 @@ RefPtr<ViewSnapshot> WebViewImpl::takeViewSnapshot()
     if (!surface)
         return nullptr;
 
-    RefPtr<ViewSnapshot> snapshot = ViewSnapshot::create(WTFMove(surface));
+    auto snapshot = ViewSnapshot::create(WTFMove(surface));
     snapshot->setVolatile(true);
 
-    return snapshot;
+    return WTFMove(snapshot);
 }
 
 void WebViewImpl::saveBackForwardSnapshotForCurrentItem()
@@ -4211,6 +4566,7 @@ void WebViewImpl::didRestoreScrollPosition()
 
 void WebViewImpl::doneWithKeyEvent(NSEvent *event, bool eventWasHandled)
 {
+    ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     if ([event type] != NSEventTypeKeyDown)
         return;
 
@@ -4323,7 +4679,7 @@ void WebViewImpl::interpretKeyEvent(NSEvent *event, void(^completionHandler)(BOO
     }
 
     LOG(TextInput, "-> handleEventByInputMethod:%p %@", event, event);
-    [inputContext() handleEventByInputMethod:event completionHandler:[weakThis = createWeakPtr(), capturedEvent = retainPtr(event), capturedBlock = makeBlockPtr(completionHandler)](BOOL handled) {
+    [inputContext() handleEventByInputMethod:event completionHandler:[weakThis = makeWeakPtr(*this), capturedEvent = retainPtr(event), capturedBlock = makeBlockPtr(completionHandler)](BOOL handled) {
         if (!weakThis) {
             capturedBlock(NO, { });
             return;
@@ -4391,12 +4747,10 @@ void WebViewImpl::insertText(id string, NSRange replacementRange)
         text = string;
 
     m_isTextInsertionReplacingSoftSpace = false;
-#if HAVE(ADVANCED_SPELL_CHECKING)
     if (m_softSpaceRange.location != NSNotFound && (replacementRange.location == NSMaxRange(m_softSpaceRange) || replacementRange.location == NSNotFound) && replacementRange.length == 0 && [[NSSpellChecker sharedSpellChecker] deletesAutospaceBeforeString:text language:nil]) {
         replacementRange = m_softSpaceRange;
         m_isTextInsertionReplacingSoftSpace = true;
     }
-#endif
     m_softSpaceRange = NSMakeRange(NSNotFound, 0);
 
     // insertText can be called for several reasons:
@@ -4418,8 +4772,14 @@ void WebViewImpl::insertText(id string, NSRange replacementRange)
     eventText.replace(NSBackTabCharacter, NSTabCharacter); // same thing is done in KeyEventMac.mm in WebCore
     if (!dictationAlternatives.isEmpty())
         m_page->insertDictatedTextAsync(eventText, replacementRange, dictationAlternatives, registerUndoGroup);
-    else
-        m_page->insertTextAsync(eventText, replacementRange, registerUndoGroup, m_isTextInsertionReplacingSoftSpace ? EditingRangeIsRelativeTo::Paragraph : EditingRangeIsRelativeTo::EditableRoot, m_isTextInsertionReplacingSoftSpace);
+    else {
+        InsertTextOptions options;
+        options.registerUndoGroup = registerUndoGroup;
+        options.editingRangeIsRelativeTo = m_isTextInsertionReplacingSoftSpace ? EditingRangeIsRelativeTo::Paragraph : EditingRangeIsRelativeTo::EditableRoot;
+        options.suppressSelectionUpdate = m_isTextInsertionReplacingSoftSpace;
+
+        m_page->insertTextAsync(eventText, replacementRange, WTFMove(options));
+    }
 }
 
 void WebViewImpl::selectedRangeWithCompletionHandler(void(^completionHandlerPtr)(NSRange selectedRange))
@@ -4464,21 +4824,12 @@ void WebViewImpl::markedRangeWithCompletionHandler(void(^completionHandlerPtr)(N
     });
 }
 
-void WebViewImpl::hasMarkedTextWithCompletionHandler(void(^completionHandlerPtr)(BOOL hasMarkedText))
+void WebViewImpl::hasMarkedTextWithCompletionHandler(void(^completionHandler)(BOOL hasMarkedText))
 {
-    auto completionHandler = adoptNS([completionHandlerPtr copy]);
-
     LOG(TextInput, "hasMarkedText");
-    m_page->getMarkedRangeAsync([completionHandler](const EditingRange& editingRangeResult, WebKit::CallbackBase::Error error) {
-        void (^completionHandlerBlock)(BOOL) = (void (^)(BOOL))completionHandler.get();
-        if (error != WebKit::CallbackBase::Error::None) {
-            LOG(TextInput, "    ...hasMarkedText failed.");
-            completionHandlerBlock(NO);
-            return;
-        }
-        BOOL hasMarkedText = editingRangeResult.location != notFound;
-        LOG(TextInput, "    -> hasMarkedText returned %u", hasMarkedText);
-        completionHandlerBlock(hasMarkedText);
+    m_page->hasMarkedText([completionHandler = makeBlockPtr(completionHandler)] (bool result) {
+        completionHandler(result);
+        LOG(TextInput, "    -> hasMarkedText returned %u", result);
     });
 }
 
@@ -4494,8 +4845,9 @@ void WebViewImpl::attributedSubstringForProposedRange(NSRange proposedRange, voi
             completionHandlerBlock(0, NSMakeRange(NSNotFound, 0));
             return;
         }
-        LOG(TextInput, "    -> attributedSubstringFromRange returned %@", [string.string.get() string]);
-        completionHandlerBlock([[string.string.get() retain] autorelease], actualRange);
+        NSAttributedString *attributedString = string;
+        LOG(TextInput, "    -> attributedSubstringFromRange returned %@", [attributedString string]);
+        completionHandlerBlock([[attributedString retain] autorelease], actualRange);
     });
 }
 
@@ -4517,7 +4869,7 @@ void WebViewImpl::firstRectForCharacterRange(NSRange range, void(^completionHand
         return;
     }
 
-    auto weakThis = createWeakPtr();
+    auto weakThis = makeWeakPtr(*this);
     m_page->firstRectForCharacterRangeAsync(range, [weakThis, completionHandler](const WebCore::IntRect& rect, const EditingRange& actualRange, WebKit::CallbackBase::Error error) {
         auto completionHandlerBlock = (void (^)(NSRect, NSRange))completionHandler.get();
         if (!weakThis) {
@@ -4548,11 +4900,10 @@ void WebViewImpl::characterIndexForPoint(NSPoint point, void(^completionHandlerP
 
     NSWindow *window = [m_view window];
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     if (window)
         point = [window convertScreenToBase:point];
-#pragma clang diagnostic pop
+    ALLOW_DEPRECATED_DECLARATIONS_END
     point = [m_view convertPoint:point fromView:nil];  // the point is relative to the main frame
 
     m_page->characterIndexForPointAsync(WebCore::IntPoint(point), [completionHandler](uint64_t result, WebKit::CallbackBase::Error error) {
@@ -4616,7 +4967,7 @@ void WebViewImpl::setMarkedText(id string, NSRange selectedRange, NSRange replac
         notifyInputContextAboutDiscardedComposition();
         // FIXME: We should store the command to handle it after DOM event processing, as it's regular keyboard input now, not a composition.
         if ([text length] == 1 && isASCII([text characterAtIndex:0]))
-            m_page->insertTextAsync(text, replacementRange);
+            m_page->insertTextAsync(text, replacementRange, { });
         else
             NSBeep();
         return;
@@ -4671,7 +5022,8 @@ bool WebViewImpl::performKeyEquivalent(NSEvent *event)
     // There's a chance that responding to this event will run a nested event loop, and
     // fetching a new event might release the old one. Retaining and then autoreleasing
     // the current event prevents that from causing a problem inside WebKit or AppKit code.
-    [[event retain] autorelease];
+    CFRetain((__bridge CFTypeRef)event);
+    CFAutorelease((__bridge CFTypeRef)event);
 
     // We get Esc key here after processing either Esc or Cmd+period. The former starts as a keyDown, and the latter starts as a key equivalent,
     // but both get transformed to a cancelOperation: command, executing which passes an Esc key event to -performKeyEquivalent:.
@@ -4692,7 +5044,7 @@ bool WebViewImpl::performKeyEquivalent(NSEvent *event)
     // this event. This lets webpages have a crack at intercepting key-modified keypresses.
     // FIXME: Why is the firstResponder check needed?
     if (m_view.getAutoreleased() == [m_view window].firstResponder) {
-        interpretKeyEvent(event, [weakThis = createWeakPtr(), capturedEvent = retainPtr(event)](BOOL handledByInputMethod, const Vector<WebCore::KeypressCommand>& commands) {
+        interpretKeyEvent(event, [weakThis = makeWeakPtr(*this), capturedEvent = retainPtr(event)](BOOL handledByInputMethod, const Vector<WebCore::KeypressCommand>& commands) {
             if (weakThis)
                 weakThis->m_page->handleKeyboardEvent(NativeWebKeyboardEvent(capturedEvent.get(), handledByInputMethod, false, commands));
         });
@@ -4710,7 +5062,7 @@ void WebViewImpl::keyUp(NSEvent *event)
     LOG(TextInput, "keyUp:%p %@", event, event);
 
     m_isTextInsertionReplacingSoftSpace = false;
-    interpretKeyEvent(event, [weakThis = createWeakPtr(), capturedEvent = retainPtr(event)](BOOL handledByInputMethod, const Vector<WebCore::KeypressCommand>& commands) {
+    interpretKeyEvent(event, [weakThis = makeWeakPtr(*this), capturedEvent = retainPtr(event)](BOOL handledByInputMethod, const Vector<WebCore::KeypressCommand>& commands) {
         ASSERT(!handledByInputMethod || commands.isEmpty());
         if (weakThis)
             weakThis->m_page->handleKeyboardEvent(NativeWebKeyboardEvent(capturedEvent.get(), handledByInputMethod, weakThis->m_isTextInsertionReplacingSoftSpace, commands));
@@ -4739,7 +5091,7 @@ void WebViewImpl::keyDown(NSEvent *event)
     }
 
     m_isTextInsertionReplacingSoftSpace = false;
-    interpretKeyEvent(event, [weakThis = createWeakPtr(), capturedEvent = retainPtr(event)](BOOL handledByInputMethod, const Vector<WebCore::KeypressCommand>& commands) {
+    interpretKeyEvent(event, [weakThis = makeWeakPtr(*this), capturedEvent = retainPtr(event)](BOOL handledByInputMethod, const Vector<WebCore::KeypressCommand>& commands) {
         ASSERT(!handledByInputMethod || commands.isEmpty());
         if (weakThis)
             weakThis->m_page->handleKeyboardEvent(NativeWebKeyboardEvent(capturedEvent.get(), handledByInputMethod, weakThis->m_isTextInsertionReplacingSoftSpace, commands));
@@ -4768,7 +5120,7 @@ void WebViewImpl::flagsChanged(NSEvent *event)
         if (m_ignoresNonWheelEvents) \
             return; \
         if (NSTextInputContext *context = [m_view inputContext]) { \
-            auto weakThis = createWeakPtr(); \
+            auto weakThis = makeWeakPtr(*this); \
             RetainPtr<NSEvent> retainedEvent = event; \
             [context handleEvent:event completionHandler:[weakThis, retainedEvent] (BOOL handled) { \
                 if (!weakThis) \
@@ -4788,10 +5140,10 @@ void WebViewImpl::flagsChanged(NSEvent *event)
 #define NATIVE_MOUSE_EVENT_HANDLER_INTERNAL(EventName) \
     void WebViewImpl::EventName(NSEvent *event) \
     { \
-        if (m_ignoresNonWheelEvents) \
+        if (m_ignoresNonWheelEvents || m_safeBrowsingWarning) \
             return; \
         if (NSTextInputContext *context = [m_view inputContext]) { \
-            auto weakThis = createWeakPtr(); \
+            auto weakThis = makeWeakPtr(*this); \
             RetainPtr<NSEvent> retainedEvent = event; \
             [context handleEvent:event completionHandler:[weakThis, retainedEvent] (BOOL handled) { \
                 if (!weakThis) \
@@ -4840,7 +5192,6 @@ void WebViewImpl::mouseMoved(NSEvent *event)
 
 _WKRectEdge WebViewImpl::pinnedState()
 {
-#if WK_API_ENABLED
     _WKRectEdge state = _WKRectEdgeNone;
     if (m_page->isPinnedToLeftSide())
         state |= _WKRectEdgeLeft;
@@ -4851,14 +5202,10 @@ _WKRectEdge WebViewImpl::pinnedState()
     if (m_page->isPinnedToBottomSide())
         state |= _WKRectEdgeBottom;
     return state;
-#else
-    return 0;
-#endif
 }
 
 _WKRectEdge WebViewImpl::rubberBandingEnabled()
 {
-#if WK_API_ENABLED
     _WKRectEdge state = _WKRectEdgeNone;
     if (m_page->rubberBandsAtLeft())
         state |= _WKRectEdgeLeft;
@@ -4869,21 +5216,14 @@ _WKRectEdge WebViewImpl::rubberBandingEnabled()
     if (m_page->rubberBandsAtBottom())
         state |= _WKRectEdgeBottom;
     return state;
-#else
-    return 0;
-#endif
 }
 
 void WebViewImpl::setRubberBandingEnabled(_WKRectEdge state)
 {
-#if WK_API_ENABLED
     m_page->setRubberBandsAtLeft(state & _WKRectEdgeLeft);
     m_page->setRubberBandsAtRight(state & _WKRectEdgeRight);
     m_page->setRubberBandsAtTop(state & _WKRectEdgeTop);
     m_page->setRubberBandsAtBottom(state & _WKRectEdgeBottom);
-#else
-    UNUSED_PARAM(state);
-#endif
 }
 
 void WebViewImpl::mouseDown(NSEvent *event)
@@ -4959,6 +5299,36 @@ bool WebViewImpl::completeBackSwipeForTesting()
     if (!m_gestureController)
         return false;
     return m_gestureController->completeSimulatedSwipeInDirectionForTesting(ViewGestureController::SwipeDirection::Back);
+}
+    
+void WebViewImpl::setUseSystemAppearance(bool useSystemAppearance)
+{
+    m_page->setUseSystemAppearance(useSystemAppearance);
+}
+
+bool WebViewImpl::useSystemAppearance()
+{
+    return m_page->useSystemAppearance();
+}
+
+void WebViewImpl::effectiveAppearanceDidChange()
+{
+    m_page->effectiveAppearanceDidChange();
+}
+
+bool WebViewImpl::effectiveAppearanceIsDark()
+{
+#if HAVE(OS_DARK_MODE_SUPPORT)
+    NSAppearanceName appearance = [[m_view effectiveAppearance] bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+    return [appearance isEqualToString:NSAppearanceNameDarkAqua];
+#else
+    return false;
+#endif
+}
+
+bool WebViewImpl::effectiveUserInterfaceLevelIsElevated()
+{
+    return false;
 }
 
 } // namespace WebKit

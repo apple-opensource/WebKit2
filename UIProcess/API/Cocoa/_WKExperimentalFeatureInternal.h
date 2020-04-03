@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,18 +25,14 @@
 
 #import "_WKExperimentalFeature.h"
 
-#if WK_API_ENABLED
-
 #import "APIExperimentalFeature.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline _WKExperimentalFeature *wrapper(API::ExperimentalFeature& experimentalFeature)
-{
-    ASSERT([experimentalFeature.wrapper() isKindOfClass:[_WKExperimentalFeature class]]);
-    return (_WKExperimentalFeature *)experimentalFeature.wrapper();
-}
+template<> struct WrapperTraits<API::ExperimentalFeature> {
+    using WrapperClass = _WKExperimentalFeature;
+};
 
 }
 
@@ -45,5 +41,3 @@ inline _WKExperimentalFeature *wrapper(API::ExperimentalFeature& experimentalFea
     API::ObjectStorage<API::ExperimentalFeature> _experimentalFeature;
 }
 @end
-
-#endif

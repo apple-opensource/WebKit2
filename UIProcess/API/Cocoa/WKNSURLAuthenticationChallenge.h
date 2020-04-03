@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,22 +25,16 @@
 
 #import "WKFoundation.h"
 
-#if WK_API_ENABLED
-
 #import "AuthenticationChallengeProxy.h"
 #import "WKObject.h"
 
 namespace WebKit {
 
-inline NSURLAuthenticationChallenge *wrapper(AuthenticationChallengeProxy& challenge)
-{
-    ASSERT([challenge.wrapper() isKindOfClass:[NSURLAuthenticationChallenge self]]);
-    return (NSURLAuthenticationChallenge *)challenge.wrapper();
-}
+template<> struct WrapperTraits<AuthenticationChallengeProxy> {
+    using WrapperClass = NSURLAuthenticationChallenge;
+};
 
 }
 
 @interface WKNSURLAuthenticationChallenge : WKObject
 @end
-
-#endif // WK_API_ENABLED

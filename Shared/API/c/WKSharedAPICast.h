@@ -54,7 +54,8 @@
 #include <WebCore/FloatRect.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntRect.h>
-#include <WebCore/LayoutMilestones.h>
+#include <WebCore/LayoutMilestone.h>
+#include <WebCore/PlatformMouseEvent.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/UserContentTypes.h>
 #include <WebCore/UserScriptTypes.h>
@@ -281,18 +282,18 @@ inline WKTypeID toAPI(API::Object::Type type)
     return static_cast<WKTypeID>(type);
 }
 
-inline WKEventModifiers toAPI(WebEvent::Modifiers modifiers)
+inline WKEventModifiers toAPI(OptionSet<WebEvent::Modifier> modifiers)
 {
     WKEventModifiers wkModifiers = 0;
-    if (modifiers & WebEvent::ShiftKey)
+    if (modifiers.contains(WebEvent::Modifier::ShiftKey))
         wkModifiers |= kWKEventModifiersShiftKey;
-    if (modifiers & WebEvent::ControlKey)
+    if (modifiers.contains(WebEvent::Modifier::ControlKey))
         wkModifiers |= kWKEventModifiersControlKey;
-    if (modifiers & WebEvent::AltKey)
+    if (modifiers.contains(WebEvent::Modifier::AltKey))
         wkModifiers |= kWKEventModifiersAltKey;
-    if (modifiers & WebEvent::MetaKey)
+    if (modifiers.contains(WebEvent::Modifier::MetaKey))
         wkModifiers |= kWKEventModifiersMetaKey;
-    if (modifiers & WebEvent::CapsLockKey)
+    if (modifiers.contains(WebEvent::Modifier::CapsLockKey))
         wkModifiers |= kWKEventModifiersCapsLockKey;
     return wkModifiers;
 }
@@ -312,6 +313,28 @@ inline WKEventMouseButton toAPI(WebMouseEvent::Button mouseButton)
         wkMouseButton = kWKEventMouseButtonMiddleButton;
         break;
     case WebMouseEvent::RightButton:
+        wkMouseButton = kWKEventMouseButtonRightButton;
+        break;
+    }
+
+    return wkMouseButton;
+}
+
+inline WKEventMouseButton toAPI(WebCore::MouseButton mouseButton)
+{
+    WKEventMouseButton wkMouseButton = kWKEventMouseButtonNoButton;
+
+    switch (mouseButton) {
+    case WebCore::MouseButton::NoButton:
+        wkMouseButton = kWKEventMouseButtonNoButton;
+        break;
+    case WebCore::MouseButton::LeftButton:
+        wkMouseButton = kWKEventMouseButtonLeftButton;
+        break;
+    case WebCore::MouseButton::MiddleButton:
+        wkMouseButton = kWKEventMouseButtonMiddleButton;
+        break;
+    case WebCore::MouseButton::RightButton:
         wkMouseButton = kWKEventMouseButtonRightButton;
         break;
     }
@@ -859,7 +882,7 @@ inline WebCore::DiagnosticLoggingResultType toDiagnosticLoggingResultType(WKDiag
     return type;
 }
 
-inline WKLayoutMilestones toWKLayoutMilestones(WebCore::LayoutMilestones milestones)
+inline WKLayoutMilestones toWKLayoutMilestones(OptionSet<WebCore::LayoutMilestone> milestones)
 {
     unsigned wkMilestones = 0;
 
@@ -875,26 +898,34 @@ inline WKLayoutMilestones toWKLayoutMilestones(WebCore::LayoutMilestones milesto
         wkMilestones |= kWKDidFirstLayoutAfterSuppressedIncrementalRendering;
     if (milestones & WebCore::DidFirstPaintAfterSuppressedIncrementalRendering)
         wkMilestones |= kWKDidFirstPaintAfterSuppressedIncrementalRendering;
-    
+    if (milestones & WebCore::DidRenderSignificantAmountOfText)
+        wkMilestones |= kWKDidRenderSignificantAmountOfText;
+    if (milestones & WebCore::DidFirstMeaningfulPaint)
+        wkMilestones |= kWKDidFirstMeaningfulPaint;
+
     return wkMilestones;
 }
 
-inline WebCore::LayoutMilestones toLayoutMilestones(WKLayoutMilestones wkMilestones)
+inline OptionSet<WebCore::LayoutMilestone> toLayoutMilestones(WKLayoutMilestones wkMilestones)
 {
-    WebCore::LayoutMilestones milestones = 0;
+    OptionSet<WebCore::LayoutMilestone> milestones;
 
     if (wkMilestones & kWKDidFirstLayout)
-        milestones |= WebCore::DidFirstLayout;
+        milestones.add(WebCore::DidFirstLayout);
     if (wkMilestones & kWKDidFirstVisuallyNonEmptyLayout)
-        milestones |= WebCore::DidFirstVisuallyNonEmptyLayout;
+        milestones.add(WebCore::DidFirstVisuallyNonEmptyLayout);
     if (wkMilestones & kWKDidHitRelevantRepaintedObjectsAreaThreshold)
-        milestones |= WebCore::DidHitRelevantRepaintedObjectsAreaThreshold;
+        milestones.add(WebCore::DidHitRelevantRepaintedObjectsAreaThreshold);
     if (wkMilestones & kWKDidFirstFlushForHeaderLayer)
-        milestones |= WebCore::DidFirstFlushForHeaderLayer;
+        milestones.add(WebCore::DidFirstFlushForHeaderLayer);
     if (wkMilestones & kWKDidFirstLayoutAfterSuppressedIncrementalRendering)
-        milestones |= WebCore::DidFirstLayoutAfterSuppressedIncrementalRendering;
+        milestones.add(WebCore::DidFirstLayoutAfterSuppressedIncrementalRendering);
     if (wkMilestones & kWKDidFirstPaintAfterSuppressedIncrementalRendering)
-        milestones |= WebCore::DidFirstPaintAfterSuppressedIncrementalRendering;
+        milestones.add(WebCore::DidFirstPaintAfterSuppressedIncrementalRendering);
+    if (wkMilestones & kWKDidRenderSignificantAmountOfText)
+        milestones.add(WebCore::DidRenderSignificantAmountOfText);
+    if (wkMilestones & kWKDidFirstMeaningfulPaint)
+        milestones.add(WebCore::DidFirstMeaningfulPaint);
     
     return milestones;
 }

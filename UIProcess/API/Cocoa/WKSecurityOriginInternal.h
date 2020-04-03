@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,13 @@
 
 #import "WKSecurityOrigin.h"
 
-#if WK_API_ENABLED
-
 #import "APISecurityOrigin.h"
 
-namespace API {
+namespace WebKit {
 
-inline WKSecurityOrigin *wrapper(API::SecurityOrigin& securityOrigin)
-{
-    ASSERT([securityOrigin.wrapper() isKindOfClass:[WKSecurityOrigin self]]);
-    return (WKSecurityOrigin *)securityOrigin.wrapper();
-}
+template<> struct WrapperTraits<API::SecurityOrigin> {
+    using WrapperClass = WKSecurityOrigin;
+};
 
 }
 
@@ -44,5 +40,3 @@ inline WKSecurityOrigin *wrapper(API::SecurityOrigin& securityOrigin)
     API::ObjectStorage<API::SecurityOrigin> _securityOrigin;
 }
 @end
-
-#endif

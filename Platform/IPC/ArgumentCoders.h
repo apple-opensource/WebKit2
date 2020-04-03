@@ -29,7 +29,9 @@
 #include "Encoder.h"
 #include <utility>
 #include <wtf/Forward.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/SHA1.h>
+#include <wtf/Unexpected.h>
 #include <wtf/WallTime.h>
 
 namespace IPC {
@@ -63,18 +65,18 @@ template<typename T> struct ArgumentCoder<OptionSet<T>> {
         return true;
     }
 
-    static std::optional<OptionSet<T>> decode(Decoder& decoder)
+    static Optional<OptionSet<T>> decode(Decoder& decoder)
     {
-        std::optional<uint64_t> value;
+        Optional<uint64_t> value;
         decoder >> value;
         if (!value)
-            return std::nullopt;
+            return WTF::nullopt;
         return OptionSet<T>::fromRaw(*value);
     }
 };
 
-template<typename T> struct ArgumentCoder<std::optional<T>> {
-    static void encode(Encoder& encoder, const std::optional<T>& optional)
+template<typename T> struct ArgumentCoder<Optional<T>> {
+    static void encode(Encoder& encoder, const Optional<T>& optional)
     {
         if (!optional) {
             encoder << false;
@@ -85,14 +87,14 @@ template<typename T> struct ArgumentCoder<std::optional<T>> {
         encoder << optional.value();
     }
 
-    static bool decode(Decoder& decoder, std::optional<T>& optional)
+    static bool decode(Decoder& decoder, Optional<T>& optional)
     {
         bool isEngaged;
         if (!decoder.decode(isEngaged))
             return false;
 
         if (!isEngaged) {
-            optional = std::nullopt;
+            optional = WTF::nullopt;
             return true;
         }
 
@@ -104,20 +106,20 @@ template<typename T> struct ArgumentCoder<std::optional<T>> {
         return true;
     }
     
-    static std::optional<std::optional<T>> decode(Decoder& decoder)
+    static Optional<Optional<T>> decode(Decoder& decoder)
     {
-        std::optional<bool> isEngaged;
+        Optional<bool> isEngaged;
         decoder >> isEngaged;
         if (!isEngaged)
-            return std::nullopt;
+            return WTF::nullopt;
         if (*isEngaged) {
-            std::optional<T> value;
+            Optional<T> value;
             decoder >> value;
             if (!value)
-                return std::nullopt;
-            return std::optional<std::optional<T>>(WTFMove(*value));
+                return WTF::nullopt;
+            return Optional<Optional<T>>(WTFMove(*value));
         }
-        return std::optional<std::optional<T>>(std::optional<T>(std::nullopt));
+        return Optional<Optional<T>>(Optional<T>(WTF::nullopt));
     }
 };
 
@@ -142,74 +144,106 @@ template<typename T, typename U> struct ArgumentCoder<std::pair<T, U>> {
         return true;
     }
 
-    static std::optional<std::pair<T, U>> decode(Decoder& decoder)
+    static Optional<std::pair<T, U>> decode(Decoder& decoder)
     {
-        std::optional<T> first;
+        Optional<T> first;
         decoder >> first;
         if (!first)
-            return std::nullopt;
+            return WTF::nullopt;
         
-        std::optional<U> second;
+        Optional<U> second;
         decoder >> second;
         if (!second)
-            return std::nullopt;
+            return WTF::nullopt;
         
         return {{ WTFMove(*first), WTFMove(*second) }};
     }
 };
 
 template<size_t index, typename... Elements>
-struct TupleCoder {
+struct TupleEncoder {
     static void encode(Encoder& encoder, const std::tuple<Elements...>& tuple)
     {
         encoder << std::get<sizeof...(Elements) - index>(tuple);
-        TupleCoder<index - 1, Elements...>::encode(encoder, tuple);
-    }
-
-    template<typename U = typename std::remove_reference<typename std::tuple_element<sizeof...(Elements) - index, std::tuple<Elements...>>::type>::type, std::enable_if_t<!UsesModernDecoder<U>::value>* = nullptr>
-    static bool decode(Decoder& decoder, std::tuple<Elements...>& tuple)
-    {
-        if (!decoder.decode(std::get<sizeof...(Elements) - index>(tuple)))
-            return false;
-        return TupleCoder<index - 1, Elements...>::decode(decoder, tuple);
-    }
-    
-    template<typename U = typename std::remove_reference<typename std::tuple_element<sizeof...(Elements) - index, std::tuple<Elements...>>::type>::type, std::enable_if_t<UsesModernDecoder<U>::value>* = nullptr>
-    static bool decode(Decoder& decoder, std::tuple<Elements...>& tuple)
-    {
-        std::optional<U> optional;
-        decoder >> optional;
-        if (!optional)
-            return false;
-        std::get<sizeof...(Elements) - index>(tuple) = WTFMove(*optional);
-        return TupleCoder<index - 1, Elements...>::decode(decoder, tuple);
+        TupleEncoder<index - 1, Elements...>::encode(encoder, tuple);
     }
 };
 
 template<typename... Elements>
-struct TupleCoder<0, Elements...> {
+struct TupleEncoder<0, Elements...> {
     static void encode(Encoder&, const std::tuple<Elements...>&)
     {
     }
+};
 
-    static bool decode(Decoder&, std::tuple<Elements...>&)
+template <typename T, typename... Elements, size_t... Indices>
+auto tupleFromTupleAndObject(T&& object, std::tuple<Elements...>&& tuple, std::index_sequence<Indices...>)
+{
+    return std::make_tuple(WTFMove(object), WTFMove(std::get<Indices>(tuple))...);
+}
+
+template <typename T, typename... Elements>
+auto tupleFromTupleAndObject(T&& object, std::tuple<Elements...>&& tuple)
+{
+    return tupleFromTupleAndObject(WTFMove(object), WTFMove(tuple), std::index_sequence_for<Elements...>());
+}
+
+template<typename Type, typename... Types>
+struct TupleDecoderImpl {
+    static Optional<std::tuple<Type, Types...>> decode(Decoder& decoder)
     {
-        return true;
+        Optional<Type> optional;
+        decoder >> optional;
+        if (!optional)
+            return WTF::nullopt;
+
+        Optional<std::tuple<Types...>> subTuple = TupleDecoderImpl<Types...>::decode(decoder);
+        if (!subTuple)
+            return WTF::nullopt;
+
+        return tupleFromTupleAndObject(WTFMove(*optional), WTFMove(*subTuple));
+    }
+};
+
+template<typename Type>
+struct TupleDecoderImpl<Type> {
+    static Optional<std::tuple<Type>> decode(Decoder& decoder)
+    {
+        Optional<Type> optional;
+        decoder >> optional;
+        if (!optional)
+            return WTF::nullopt;
+        return std::make_tuple(WTFMove(*optional));
+    }
+};
+
+template<size_t size, typename... Elements>
+struct TupleDecoder {
+    static Optional<std::tuple<Elements...>> decode(Decoder& decoder)
+    {
+        return TupleDecoderImpl<Elements...>::decode(decoder);
+    }
+};
+
+template<>
+struct TupleDecoder<0> {
+    static Optional<std::tuple<>> decode(Decoder& decoder)
+    {
+        return std::make_tuple();
     }
 };
 
 template<typename... Elements> struct ArgumentCoder<std::tuple<Elements...>> {
     static void encode(Encoder& encoder, const std::tuple<Elements...>& tuple)
     {
-        TupleCoder<sizeof...(Elements), Elements...>::encode(encoder, tuple);
+        TupleEncoder<sizeof...(Elements), Elements...>::encode(encoder, tuple);
     }
 
-    static bool decode(Decoder& decoder, std::tuple<Elements...>& tuple)
+    static Optional<std::tuple<Elements...>> decode(Decoder& decoder)
     {
-        return TupleCoder<sizeof...(Elements), Elements...>::decode(decoder, tuple);
+        return TupleDecoder<sizeof...(Elements), Elements...>::decode(decoder);
     }
 };
-
 
 template<typename KeyType, typename ValueType> struct ArgumentCoder<WTF::KeyValuePair<KeyType, ValueType>> {
     static void encode(Encoder& encoder, const WTF::KeyValuePair<KeyType, ValueType>& pair)
@@ -233,19 +267,19 @@ template<typename KeyType, typename ValueType> struct ArgumentCoder<WTF::KeyValu
     }
 };
 
-template<bool fixedSizeElements, typename T, size_t inlineCapacity> struct VectorArgumentCoder;
+template<bool fixedSizeElements, typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity> struct VectorArgumentCoder;
 
-template<typename T, size_t inlineCapacity> struct VectorArgumentCoder<false, T, inlineCapacity> {
-    static void encode(Encoder& encoder, const Vector<T, inlineCapacity>& vector)
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity> struct VectorArgumentCoder<false, T, inlineCapacity, OverflowHandler, minCapacity> {
+    static void encode(Encoder& encoder, const Vector<T, inlineCapacity, OverflowHandler, minCapacity>& vector)
     {
         encoder << static_cast<uint64_t>(vector.size());
         for (size_t i = 0; i < vector.size(); ++i)
             encoder << vector[i];
     }
 
-    static bool decode(Decoder& decoder, Vector<T, inlineCapacity>& vector)
+    static bool decode(Decoder& decoder, Vector<T, inlineCapacity, OverflowHandler, minCapacity>& vector)
     {
-        std::optional<Vector<T, inlineCapacity>> optional;
+        Optional<Vector<T, inlineCapacity, OverflowHandler, minCapacity>> optional;
         decoder >> optional;
         if (!optional)
             return false;
@@ -253,33 +287,33 @@ template<typename T, size_t inlineCapacity> struct VectorArgumentCoder<false, T,
         return true;
     }
 
-    static std::optional<Vector<T, inlineCapacity>> decode(Decoder& decoder)
+    static Optional<Vector<T, inlineCapacity, OverflowHandler, minCapacity>> decode(Decoder& decoder)
     {
         uint64_t size;
         if (!decoder.decode(size))
-            return std::nullopt;
+            return WTF::nullopt;
 
-        Vector<T, inlineCapacity> vector;
+        Vector<T, inlineCapacity, OverflowHandler, minCapacity> vector;
         for (size_t i = 0; i < size; ++i) {
-            std::optional<T> element;
+            Optional<T> element;
             decoder >> element;
             if (!element)
-                return std::nullopt;
+                return WTF::nullopt;
             vector.append(WTFMove(*element));
         }
         vector.shrinkToFit();
-        return WTFMove(vector);
+        return vector;
     }
 };
 
-template<typename T, size_t inlineCapacity> struct VectorArgumentCoder<true, T, inlineCapacity> {
-    static void encode(Encoder& encoder, const Vector<T, inlineCapacity>& vector)
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity> struct VectorArgumentCoder<true, T, inlineCapacity, OverflowHandler, minCapacity> {
+    static void encode(Encoder& encoder, const Vector<T, inlineCapacity, OverflowHandler, minCapacity>& vector)
     {
         encoder << static_cast<uint64_t>(vector.size());
         encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(vector.data()), vector.size() * sizeof(T), alignof(T));
     }
     
-    static bool decode(Decoder& decoder, Vector<T, inlineCapacity>& vector)
+    static bool decode(Decoder& decoder, Vector<T, inlineCapacity, OverflowHandler, minCapacity>& vector)
     {
         uint64_t size;
         if (!decoder.decode(size))
@@ -293,7 +327,7 @@ template<typename T, size_t inlineCapacity> struct VectorArgumentCoder<true, T, 
             return false;
         }
 
-        Vector<T, inlineCapacity> temp;
+        Vector<T, inlineCapacity, OverflowHandler, minCapacity> temp;
         temp.grow(size);
 
         decoder.decodeFixedLengthData(reinterpret_cast<uint8_t*>(temp.data()), size * sizeof(T), alignof(T));
@@ -302,21 +336,21 @@ template<typename T, size_t inlineCapacity> struct VectorArgumentCoder<true, T, 
         return true;
     }
     
-    static std::optional<Vector<T, inlineCapacity>> decode(Decoder& decoder)
+    static Optional<Vector<T, inlineCapacity, OverflowHandler, minCapacity>> decode(Decoder& decoder)
     {
         uint64_t size;
         if (!decoder.decode(size))
-            return std::nullopt;
+            return WTF::nullopt;
         
         // Since we know the total size of the elements, we can allocate the vector in
         // one fell swoop. Before allocating we must however make sure that the decoder buffer
         // is big enough.
         if (!decoder.bufferIsLargeEnoughToContain<T>(size)) {
             decoder.markInvalid();
-            return std::nullopt;
+            return WTF::nullopt;
         }
         
-        Vector<T, inlineCapacity> vector;
+        Vector<T, inlineCapacity, OverflowHandler, minCapacity> vector;
         vector.grow(size);
         
         decoder.decodeFixedLengthData(reinterpret_cast<uint8_t*>(vector.data()), size * sizeof(T), alignof(T));
@@ -325,67 +359,55 @@ template<typename T, size_t inlineCapacity> struct VectorArgumentCoder<true, T, 
     }
 };
 
-template<typename T, size_t inlineCapacity> struct ArgumentCoder<Vector<T, inlineCapacity>> : VectorArgumentCoder<std::is_arithmetic<T>::value, T, inlineCapacity> { };
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity> struct ArgumentCoder<Vector<T, inlineCapacity, OverflowHandler, minCapacity>> : VectorArgumentCoder<std::is_arithmetic<T>::value, T, inlineCapacity, OverflowHandler, minCapacity> { };
 
 template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTraitsArg, typename MappedTraitsArg> struct ArgumentCoder<HashMap<KeyArg, MappedArg, HashArg, KeyTraitsArg, MappedTraitsArg>> {
     typedef HashMap<KeyArg, MappedArg, HashArg, KeyTraitsArg, MappedTraitsArg> HashMapType;
 
     static void encode(Encoder& encoder, const HashMapType& hashMap)
     {
-        encoder << static_cast<uint64_t>(hashMap.size());
+        encoder << static_cast<uint32_t>(hashMap.size());
         for (typename HashMapType::const_iterator it = hashMap.begin(), end = hashMap.end(); it != end; ++it)
             encoder << *it;
     }
 
-    static bool decode(Decoder& decoder, HashMapType& hashMap)
+    static Optional<HashMapType> decode(Decoder& decoder)
     {
-        uint64_t hashMapSize;
+        uint32_t hashMapSize;
         if (!decoder.decode(hashMapSize))
-            return false;
+            return WTF::nullopt;
 
-        HashMapType tempHashMap;
-        for (uint64_t i = 0; i < hashMapSize; ++i) {
-            KeyArg key;
-            MappedArg value;
-            if (!decoder.decode(key))
-                return false;
-            if (!decoder.decode(value))
-                return false;
+        HashMapType hashMap;
+        hashMap.reserveInitialCapacity(hashMapSize);
+        for (uint32_t i = 0; i < hashMapSize; ++i) {
+            Optional<KeyArg> key;
+            decoder >> key;
+            if (UNLIKELY(!key))
+                return WTF::nullopt;
 
-            if (!tempHashMap.add(key, value).isNewEntry) {
+            Optional<MappedArg> value;
+            decoder >> value;
+            if (UNLIKELY(!value))
+                return WTF::nullopt;
+
+            if (UNLIKELY(!hashMap.add(WTFMove(*key), WTFMove(*value)).isNewEntry)) {
                 // The hash map already has the specified key, bail.
                 decoder.markInvalid();
-                return false;
+                return WTF::nullopt;
             }
         }
 
-        hashMap.swap(tempHashMap);
-        return true;
+        return hashMap;
     }
 
-    static std::optional<HashMapType> decode(Decoder& decoder)
+    static bool decode(Decoder& decoder, HashMapType& hashMap)
     {
-        uint64_t hashMapSize;
-        if (!decoder.decode(hashMapSize))
-            return std::nullopt;
-        
-        HashMapType hashMap;
-        for (uint64_t i = 0; i < hashMapSize; ++i) {
-            KeyArg key;
-            MappedArg value;
-            if (!decoder.decode(key))
-                return std::nullopt;
-            if (!decoder.decode(value))
-                return std::nullopt;
-            
-            if (!hashMap.add(key, value).isNewEntry) {
-                // The hash map already has the specified key, bail.
-                decoder.markInvalid();
-                return std::nullopt;
-            }
-        }
-        
-        return WTFMove(hashMap);
+        Optional<HashMapType> tempHashMap;
+        decoder >> tempHashMap;
+        if (!tempHashMap)
+            return false;
+        hashMap.swap(*tempHashMap);
+        return true;
     }
 };
 
@@ -401,26 +423,36 @@ template<typename KeyArg, typename HashArg, typename KeyTraitsArg> struct Argume
 
     static bool decode(Decoder& decoder, HashSetType& hashSet)
     {
-        uint64_t hashSetSize;
-        if (!decoder.decode(hashSetSize))
+        Optional<HashSetType> tempHashSet;
+        decoder >> tempHashSet;
+        if (!tempHashSet)
             return false;
 
-        HashSetType tempHashSet;
+        hashSet.swap(tempHashSet.value());
+        return true;
+    }
+
+    static Optional<HashSetType> decode(Decoder& decoder)
+    {
+        uint64_t hashSetSize;
+        if (!decoder.decode(hashSetSize))
+            return WTF::nullopt;
+
+        HashSetType hashSet;
         for (uint64_t i = 0; i < hashSetSize; ++i) {
-            std::optional<KeyArg> key;
+            Optional<KeyArg> key;
             decoder >> key;
             if (!key)
-                return false;
+                return WTF::nullopt;
 
-            if (!tempHashSet.add(*key).isNewEntry) {
-                // The hash map already has the specified key, bail.
+            if (!hashSet.add(WTFMove(key.value())).isNewEntry) {
+                // The hash set already has the specified key, bail.
                 decoder.markInvalid();
-                return false;
+                return WTF::nullopt;
             }
         }
 
-        hashSet.swap(tempHashSet);
-        return true;
+        return hashSet;
     }
 };
 
@@ -477,39 +509,100 @@ template<typename ValueType, typename ErrorType> struct ArgumentCoder<Expected<V
         encoder << expected.value();
     }
 
-    static std::optional<Expected<ValueType, ErrorType>> decode(Decoder& decoder)
+    static Optional<Expected<ValueType, ErrorType>> decode(Decoder& decoder)
     {
-        std::optional<bool> hasValue;
+        Optional<bool> hasValue;
         decoder >> hasValue;
         if (!hasValue)
-            return std::nullopt;
+            return WTF::nullopt;
         
         if (*hasValue) {
-            std::optional<ValueType> value;
+            Optional<ValueType> value;
             decoder >> value;
             if (!value)
-                return std::nullopt;
+                return WTF::nullopt;
             
             Expected<ValueType, ErrorType> expected(WTFMove(*value));
-            return WTFMove(expected);
+            return expected;
         }
-        std::optional<ErrorType> error;
+        Optional<ErrorType> error;
         decoder >> error;
         if (!error)
-            return std::nullopt;
+            return WTF::nullopt;
         return { makeUnexpected(WTFMove(*error)) };
     }
 };
 
+template<size_t index, typename... Types>
+struct VariantCoder {
+    static void encode(Encoder& encoder, const WTF::Variant<Types...>& variant, unsigned i)
+    {
+        if (i == index) {
+            encoder << WTF::get<index>(variant);
+            return;
+        }
+        VariantCoder<index - 1, Types...>::encode(encoder, variant, i);
+    }
+    
+    static Optional<WTF::Variant<Types...>> decode(Decoder& decoder, unsigned i)
+    {
+        if (i == index) {
+            Optional<typename WTF::variant_alternative<index, WTF::Variant<Types...>>::type> optional;
+            decoder >> optional;
+            if (!optional)
+                return WTF::nullopt;
+            return { WTFMove(*optional) };
+        }
+        return VariantCoder<index - 1, Types...>::decode(decoder, i);
+    }
+};
+
+template<typename... Types>
+struct VariantCoder<0, Types...> {
+    static void encode(Encoder& encoder, const WTF::Variant<Types...>& variant, unsigned i)
+    {
+        ASSERT_UNUSED(i, !i);
+        encoder << WTF::get<0>(variant);
+    }
+    
+    static Optional<WTF::Variant<Types...>> decode(Decoder& decoder, unsigned i)
+    {
+        ASSERT_UNUSED(i, !i);
+        Optional<typename WTF::variant_alternative<0, WTF::Variant<Types...>>::type> optional;
+        decoder >> optional;
+        if (!optional)
+            return WTF::nullopt;
+        return { WTFMove(*optional) };
+    }
+};
+
+template<typename... Types> struct ArgumentCoder<WTF::Variant<Types...>> {
+    static void encode(Encoder& encoder, const WTF::Variant<Types...>& variant)
+    {
+        unsigned i = variant.index();
+        encoder << i;
+        VariantCoder<sizeof...(Types) - 1, Types...>::encode(encoder, variant, i);
+    }
+    
+    static Optional<WTF::Variant<Types...>> decode(Decoder& decoder)
+    {
+        Optional<unsigned> i;
+        decoder >> i;
+        if (!i)
+            return WTF::nullopt;
+        return VariantCoder<sizeof...(Types) - 1, Types...>::decode(decoder, *i);
+    }
+};
+    
 template<> struct ArgumentCoder<WallTime> {
     static void encode(Encoder&, const WallTime&);
     static bool decode(Decoder&, WallTime&);
-    static std::optional<WallTime> decode(Decoder&);
+    static Optional<WallTime> decode(Decoder&);
 };
 
-template<> struct ArgumentCoder<AtomicString> {
-    static void encode(Encoder&, const AtomicString&);
-    static bool decode(Decoder&, AtomicString&);
+template<> struct ArgumentCoder<AtomString> {
+    static void encode(Encoder&, const AtomString&);
+    static bool decode(Decoder&, AtomString&);
 };
 
 template<> struct ArgumentCoder<CString> {
@@ -520,7 +613,7 @@ template<> struct ArgumentCoder<CString> {
 template<> struct ArgumentCoder<String> {
     static void encode(Encoder&, const String&);
     static bool decode(Decoder&, String&);
-    static std::optional<String> decode(Decoder&);
+    static Optional<String> decode(Decoder&);
 };
 
 template<> struct ArgumentCoder<SHA1::Digest> {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,15 +25,14 @@
 
 #import <WebKit/WKFoundation.h>
 
-#if WK_API_ENABLED
-
 @class WKProcessPool;
 @class _WKAutomationSessionConfiguration;
 
 @protocol _WKAutomationDelegate <NSObject>
 @optional
-- (BOOL)_processPoolAllowsRemoteAutomation:(WKProcessPool *)processPool;
-- (void)_processPool:(WKProcessPool *)processPool didRequestAutomationSessionWithIdentifier:(NSString *)identifier configuration:(_WKAutomationSessionConfiguration *)configuration;
-@end
+- (BOOL)_processPoolAllowsRemoteAutomation:(WKProcessPool *)processPool WK_API_AVAILABLE(macos(10.13), ios(11.0));
+- (void)_processPool:(WKProcessPool *)processPool didRequestAutomationSessionWithIdentifier:(NSString *)identifier configuration:(_WKAutomationSessionConfiguration *)configuration WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
 
-#endif // WK_API_ENABLED
+- (NSString *)_processPoolBrowserNameForAutomation:(WKProcessPool *)processPool WK_API_AVAILABLE(macos(10.14), ios(12.0));
+- (NSString *)_processPoolBrowserVersionForAutomation:(WKProcessPool *)processPool WK_API_AVAILABLE(macos(10.14), ios(12.0));
+@end

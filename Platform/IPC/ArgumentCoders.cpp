@@ -47,27 +47,27 @@ bool ArgumentCoder<WallTime>::decode(Decoder& decoder, WallTime& time)
     return true;
 }
 
-std::optional<WallTime> ArgumentCoder<WallTime>::decode(Decoder& decoder)
+Optional<WallTime> ArgumentCoder<WallTime>::decode(Decoder& decoder)
 {
-    std::optional<double> time;
+    Optional<double> time;
     decoder >> time;
     if (!time)
-        return std::nullopt;
+        return WTF::nullopt;
     return WallTime::fromRawSeconds(*time);
 }
 
-void ArgumentCoder<AtomicString>::encode(Encoder& encoder, const AtomicString& atomicString)
+void ArgumentCoder<AtomString>::encode(Encoder& encoder, const AtomString& atomString)
 {
-    encoder << atomicString.string();
+    encoder << atomString.string();
 }
 
-bool ArgumentCoder<AtomicString>::decode(Decoder& decoder, AtomicString& atomicString)
+bool ArgumentCoder<AtomString>::decode(Decoder& decoder, AtomString& atomString)
 {
     String string;
     if (!decoder.decode(string))
         return false;
 
-    atomicString = string;
+    atomString = string;
     return true;
 }
 
@@ -132,49 +132,27 @@ void ArgumentCoder<String>::encode(Encoder& encoder, const String& string)
 }
 
 template <typename CharacterType>
-static inline bool decodeStringText(Decoder& decoder, uint32_t length, String& result)
+static inline Optional<String> decodeStringText(Decoder& decoder, uint32_t length)
 {
     // Before allocating the string, make sure that the decoder buffer is big enough.
     if (!decoder.bufferIsLargeEnoughToContain<CharacterType>(length)) {
         decoder.markInvalid();
-        return false;
+        return WTF::nullopt;
     }
     
     CharacterType* buffer;
     String string = String::createUninitialized(length, buffer);
     if (!decoder.decodeFixedLengthData(reinterpret_cast<uint8_t*>(buffer), length * sizeof(CharacterType), alignof(CharacterType)))
-        return false;
+        return WTF::nullopt;
     
-    result = string;
-    return true;    
+    return string;
 }
 
-bool ArgumentCoder<String>::decode(Decoder& decoder, String& result)
+Optional<String> ArgumentCoder<String>::decode(Decoder& decoder)
 {
     uint32_t length;
     if (!decoder.decode(length))
-        return false;
-
-    if (length == std::numeric_limits<uint32_t>::max()) {
-        // This is the null string.
-        result = String();
-        return true;
-    }
-
-    bool is8Bit;
-    if (!decoder.decode(is8Bit))
-        return false;
-
-    if (is8Bit)
-        return decodeStringText<LChar>(decoder, length, result);
-    return decodeStringText<UChar>(decoder, length, result);
-}
-
-std::optional<String> ArgumentCoder<String>::decode(Decoder& decoder)
-{
-    uint32_t length;
-    if (!decoder.decode(length))
-        return std::nullopt;
+        return WTF::nullopt;
     
     if (length == std::numeric_limits<uint32_t>::max()) {
         // This is the null string.
@@ -183,17 +161,21 @@ std::optional<String> ArgumentCoder<String>::decode(Decoder& decoder)
     
     bool is8Bit;
     if (!decoder.decode(is8Bit))
-        return std::nullopt;
+        return WTF::nullopt;
     
-    String result;
-    if (is8Bit) {
-        if (!decodeStringText<LChar>(decoder, length, result))
-            return std::nullopt;
-        return result;
-    }
-    if (!decodeStringText<UChar>(decoder, length, result))
-        return std::nullopt;
-    return result;
+    if (is8Bit)
+        return decodeStringText<LChar>(decoder, length);
+    return decodeStringText<UChar>(decoder, length);
+}
+
+bool ArgumentCoder<String>::decode(Decoder& decoder, String& result)
+{
+    Optional<String> string;
+    decoder >> string;
+    if (!string)
+        return false;
+    result = WTFMove(*string);
+    return true;
 }
 
 void ArgumentCoder<SHA1::Digest>::encode(Encoder& encoder, const SHA1::Digest& digest)

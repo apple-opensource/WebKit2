@@ -28,6 +28,7 @@
 
 #include <WebCore/LocalizedStrings.h>
 #include <WebCore/PublicSuffix.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/SecurityOrigin.h>
 
 #if PLATFORM(COCOA)
@@ -50,16 +51,10 @@ String WebsiteDataRecord::displayNameForCookieHostName(const String& hostName)
     if (hostName == "localhost")
         return hostName;
 #endif
-
-#if ENABLE(PUBLIC_SUFFIX_LIST)
-    return WebCore::topPrivatelyControlledDomain(hostName.startsWith('.') ? hostName.substring(1) : hostName);
-#endif
-
-    return String();
+    return displayNameForHostName(hostName);
 }
 
-#if ENABLE(NETSCAPE_PLUGIN_API)
-String WebsiteDataRecord::displayNameForPluginDataHostName(const String& hostName)
+String WebsiteDataRecord::displayNameForHostName(const String& hostName)
 {
 #if ENABLE(PUBLIC_SUFFIX_LIST)
     return WebCore::topPrivatelyControlledDomain(hostName);
@@ -67,7 +62,6 @@ String WebsiteDataRecord::displayNameForPluginDataHostName(const String& hostNam
 
     return String();
 }
-#endif
 
 String WebsiteDataRecord::displayNameForOrigin(const WebCore::SecurityOriginData& securityOrigin)
 {
@@ -86,26 +80,29 @@ String WebsiteDataRecord::displayNameForOrigin(const WebCore::SecurityOriginData
 
 void WebsiteDataRecord::add(WebsiteDataType type, const WebCore::SecurityOriginData& origin)
 {
-    types |= type;
-
+    types.add(type);
     origins.add(origin);
 }
 
 void WebsiteDataRecord::addCookieHostName(const String& hostName)
 {
-    types |= WebsiteDataType::Cookies;
-
+    types.add(WebsiteDataType::Cookies);
     cookieHostNames.add(hostName);
 }
 
 #if ENABLE(NETSCAPE_PLUGIN_API)
 void WebsiteDataRecord::addPluginDataHostName(const String& hostName)
 {
-    types |= WebsiteDataType::PlugInData;
-
+    types.add(WebsiteDataType::PlugInData);
     pluginDataHostNames.add(hostName);
 }
 #endif
+
+void WebsiteDataRecord::addHSTSCacheHostname(const String& hostName)
+{
+    types.add(WebsiteDataType::HSTSCache);
+    HSTSCacheHostNames.add(hostName);
+}
 
 static inline bool hostIsInDomain(StringView host, StringView domain)
 {
@@ -117,20 +114,20 @@ static inline bool hostIsInDomain(StringView host, StringView domain)
     return !suffixOffset || host[suffixOffset - 1] == '.';
 }
 
-bool WebsiteDataRecord::matchesTopPrivatelyControlledDomain(const String& topPrivatelyControlledDomain) const
+bool WebsiteDataRecord::matches(const WebCore::RegistrableDomain& domain) const
 {
-    if (topPrivatelyControlledDomain.isEmpty())
+    if (domain.isEmpty())
         return false;
 
     if (types.contains(WebsiteDataType::Cookies)) {
         for (const auto& hostName : cookieHostNames) {
-            if (hostIsInDomain(hostName, topPrivatelyControlledDomain))
+            if (hostIsInDomain(hostName, domain.string()))
                 return true;
         }
     }
 
     for (const auto& dataRecordOriginData : origins) {
-        if (hostIsInDomain(dataRecordOriginData.host, topPrivatelyControlledDomain))
+        if (hostIsInDomain(dataRecordOriginData.host, domain.string()))
             return true;
     }
 
@@ -154,13 +151,6 @@ String WebsiteDataRecord::topPrivatelyControlledDomain()
 #endif // ENABLE(PUBLIC_SUFFIX_LIST)
     
     return emptyString();
-}
-
-void WebsiteDataRecord::addOriginWithCredential(const String& origin)
-{
-    types |= WebsiteDataType::Credentials;
-
-    originsWithCredentials.add(origin);
 }
 
 }

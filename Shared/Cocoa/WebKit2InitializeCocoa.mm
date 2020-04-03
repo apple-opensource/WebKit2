@@ -27,13 +27,13 @@
 #import "WebKit2Initialize.h"
 
 #import "LogInitialization.h"
+#import <JavaScriptCore/InitializeThreading.h>
 #import <WebCore/LogInitialization.h>
 #import <mutex>
-#import <runtime/InitializeThreading.h>
 #import <wtf/MainThread.h>
 #import <wtf/RunLoop.h>
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #import <WebCore/WebCoreThreadSystemInterface.h>
 #endif
 
@@ -43,7 +43,7 @@ static std::once_flag flag;
 
 static void runInitializationCode(void* = nullptr)
 {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     InitWebCoreThreadSystemInterface();
 #endif
 

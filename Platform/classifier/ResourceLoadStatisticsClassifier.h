@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,15 +31,22 @@ struct ResourceLoadStatistics;
 
 namespace WebKit {
 
+enum ResourceLoadPrevalence {
+    Low = 1 << 0,
+    High = 1 << 1,
+    VeryHigh = 1 << 2,
+};
+
 class ResourceLoadStatisticsClassifier {
 public:
     ResourceLoadStatisticsClassifier() = default;
     virtual ~ResourceLoadStatisticsClassifier() = default;
-    bool hasPrevalentResourceCharacteristics(const WebCore::ResourceLoadStatistics& resourceStatistic);
+    ResourceLoadPrevalence calculateResourcePrevalence(const WebCore::ResourceLoadStatistics& resourceStatistic, ResourceLoadPrevalence currentPrevalence);
+    ResourceLoadPrevalence calculateResourcePrevalence(unsigned subresourceUnderTopFrameDomainsCount, unsigned subresourceUniqueRedirectsToCount, unsigned subframeUnderTopFrameOriginsCount, unsigned topFrameUniqueRedirectsToCount, ResourceLoadPrevalence currentPrevalence);
 protected:
-    virtual bool classify(unsigned subresourceUnderTopFrameOriginsCount, unsigned subresourceUniqueRedirectsToCount, unsigned subframeUnderTopFrameOriginsCount)
+    virtual bool classify(unsigned subresourceUnderTopFrameDomainsCount, unsigned subresourceUniqueRedirectsToCount, unsigned subframeUnderTopFrameOriginsCount)
     {
-        return classifyWithVectorThreshold(subresourceUnderTopFrameOriginsCount, subresourceUniqueRedirectsToCount, subframeUnderTopFrameOriginsCount);
+        return classifyWithVectorThreshold(subresourceUnderTopFrameDomainsCount, subresourceUniqueRedirectsToCount, subframeUnderTopFrameOriginsCount);
     }
     bool classifyWithVectorThreshold(unsigned, unsigned, unsigned);
 };
