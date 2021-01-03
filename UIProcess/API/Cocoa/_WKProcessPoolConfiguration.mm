@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,10 @@
 #import "config.h"
 #import "_WKProcessPoolConfigurationInternal.h"
 
+#import "LegacyGlobalSettings.h"
 #import <objc/runtime.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 @implementation _WKProcessPoolConfiguration
 
@@ -108,12 +110,11 @@
 
 - (BOOL)diskCacheSpeculativeValidationEnabled
 {
-    return _processPoolConfiguration->diskCacheSpeculativeValidationEnabled();
+    return NO;
 }
 
 - (void)setDiskCacheSpeculativeValidationEnabled:(BOOL)enabled
 {
-    _processPoolConfiguration->setDiskCacheSpeculativeValidationEnabled(enabled);
 }
 
 - (BOOL)ignoreSynchronousMessagingTimeoutsForTesting
@@ -142,11 +143,9 @@
     if (paths.isEmpty())
         return @[ ];
 
-    NSMutableArray *urls = [NSMutableArray arrayWithCapacity:paths.size()];
-    for (const auto& path : paths)
-        [urls addObject:[NSURL fileURLWithFileSystemRepresentation:path.data() isDirectory:NO relativeToURL:nil]];
-
-    return urls;
+    return createNSArray(paths, [] (auto& path) {
+        return [NSURL fileURLWithFileSystemRepresentation:path.data() isDirectory:NO relativeToURL:nil];
+    }).autorelease();
 }
 
 - (void)setAdditionalReadAccessAllowedURLs:(NSArray<NSURL *> *)additionalReadAccessAllowedURLs
@@ -176,51 +175,22 @@
 
 - (NSArray *)cachePartitionedURLSchemes
 {
-    auto schemes = _processPoolConfiguration->cachePartitionedURLSchemes();
-    if (schemes.isEmpty())
-        return @[];
-
-    NSMutableArray *array = [NSMutableArray arrayWithCapacity:schemes.size()];
-    for (const auto& scheme : schemes)
-        [array addObject:(NSString *)scheme];
-
-    return array;
+    return createNSArray(_processPoolConfiguration->cachePartitionedURLSchemes()).autorelease();
 }
 
 - (void)setCachePartitionedURLSchemes:(NSArray *)cachePartitionedURLSchemes
 {
-    Vector<String> schemes;
-    for (id urlScheme in cachePartitionedURLSchemes) {
-        if ([urlScheme isKindOfClass:[NSString class]])
-            schemes.append(String((NSString *)urlScheme));
-    }
-    
-    _processPoolConfiguration->setCachePartitionedURLSchemes(WTFMove(schemes));
+    _processPoolConfiguration->setCachePartitionedURLSchemes(makeVector<String>(cachePartitionedURLSchemes));
 }
 
 - (NSArray *)alwaysRevalidatedURLSchemes
 {
-    auto& schemes = _processPoolConfiguration->alwaysRevalidatedURLSchemes();
-    if (schemes.isEmpty())
-        return @[];
-
-    NSMutableArray *array = [NSMutableArray arrayWithCapacity:schemes.size()];
-    for (auto& scheme : schemes)
-        [array addObject:(NSString *)scheme];
-
-    return array;
+    return createNSArray(_processPoolConfiguration->alwaysRevalidatedURLSchemes()).autorelease();
 }
 
 - (void)setAlwaysRevalidatedURLSchemes:(NSArray *)alwaysRevalidatedURLSchemes
 {
-    Vector<String> schemes;
-    schemes.reserveInitialCapacity(alwaysRevalidatedURLSchemes.count);
-    for (id scheme in alwaysRevalidatedURLSchemes) {
-        if ([scheme isKindOfClass:[NSString class]])
-            schemes.append((NSString *)scheme);
-    }
-
-    _processPoolConfiguration->setAlwaysRevalidatedURLSchemes(WTFMove(schemes));
+    _processPoolConfiguration->setAlwaysRevalidatedURLSchemes(makeVector<String>(alwaysRevalidatedURLSchemes));
 }
 
 - (NSString *)sourceApplicationBundleIdentifier
@@ -239,16 +209,6 @@
 
 - (void)setSourceApplicationSecondaryIdentifier:(NSString *)sourceApplicationSecondaryIdentifier
 {
-}
-
-- (BOOL)shouldCaptureAudioInUIProcess
-{
-    return _processPoolConfiguration->shouldCaptureAudioInUIProcess();
-}
-
-- (void)setShouldCaptureAudioInUIProcess:(BOOL)shouldCaptureAudioInUIProcess
-{
-    _processPoolConfiguration->setShouldCaptureAudioInUIProcess(shouldCaptureAudioInUIProcess);
 }
 
 - (void)setPresentingApplicationPID:(pid_t)presentingApplicationPID
@@ -313,15 +273,12 @@
 
 - (BOOL)pageCacheEnabled
 {
-    return _processPoolConfiguration->cacheModel() != WebKit::CacheModel::DocumentViewer;
+    return _processPoolConfiguration->usesBackForwardCache();
 }
 
 - (void)setPageCacheEnabled:(BOOL)enabled
 {
-    if (!enabled)
-        _processPoolConfiguration->setCacheModel(WebKit::CacheModel::DocumentViewer);
-    else if (![self pageCacheEnabled])
-        _processPoolConfiguration->setCacheModel(WebKit::CacheModel::PrimaryWebBrowser);
+    return _processPoolConfiguration->setUsesBackForwardCache(enabled);
 }
 
 - (BOOL)usesSingleWebProcess
@@ -334,11 +291,6 @@
     _processPoolConfiguration->setUsesSingleWebProcess(enabled);
 }
 
-- (BOOL)suppressesConnectionTerminationOnSystemChange
-{
-    return _processPoolConfiguration->suppressesConnectionTerminationOnSystemChange();
-}
-
 - (BOOL)isJITEnabled
 {
     return _processPoolConfiguration->isJITEnabled();
@@ -347,11 +299,6 @@
 - (void)setJITEnabled:(BOOL)enabled
 {
     _processPoolConfiguration->setJITEnabled(enabled);
-}
-
-- (NSUInteger)downloadMonitorSpeedMultiplierForTesting
-{
-    return _processPoolConfiguration->downloadMonitorSpeedMultiplier();
 }
 
 - (void)setHSTSStorageDirectory:(NSURL *)directory
@@ -368,27 +315,7 @@
     return [NSURL fileURLWithPath:_processPoolConfiguration->hstsStorageDirectory() isDirectory:YES];
 }
 
-- (void)setDownloadMonitorSpeedMultiplierForTesting:(NSUInteger)multiplier
-{
-    _processPoolConfiguration->setDownloadMonitorSpeedMultiplier(multiplier);
-}
-
-- (void)setSuppressesConnectionTerminationOnSystemChange:(BOOL)suppressesConnectionTerminationOnSystemChange
-{
-    _processPoolConfiguration->setSuppressesConnectionTerminationOnSystemChange(suppressesConnectionTerminationOnSystemChange);
-}
-
 #if PLATFORM(IOS_FAMILY)
-- (NSString *)CTDataConnectionServiceType
-{
-    return _processPoolConfiguration->ctDataConnectionServiceType();
-}
-
-- (void)setCTDataConnectionServiceType:(NSString *)ctDataConnectionServiceType
-{
-    _processPoolConfiguration->setCTDataConnectionServiceType(ctDataConnectionServiceType);
-}
-
 - (BOOL)alwaysRunsAtBackgroundPriority
 {
     return _processPoolConfiguration->alwaysRunsAtBackgroundPriority();
@@ -433,6 +360,16 @@
 - (void)setCustomWebContentServiceBundleIdentifier:(NSString *)customWebContentServiceBundleIdentifier
 {
     _processPoolConfiguration->setCustomWebContentServiceBundleIdentifier(customWebContentServiceBundleIdentifier);
+}
+
+- (BOOL)configureJSCForTesting
+{
+    return _processPoolConfiguration->shouldConfigureJSCForTesting();
+}
+
+- (void)setConfigureJSCForTesting:(BOOL)value
+{
+    _processPoolConfiguration->setShouldConfigureJSCForTesting(value);
 }
 
 #pragma mark WKObject protocol implementation

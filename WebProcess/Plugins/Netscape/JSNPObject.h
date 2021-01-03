@@ -43,8 +43,8 @@ class NPRuntimeObjectMap;
 
 class JSNPObject final : public JSC::JSDestructibleObject {
 public:
-    typedef JSC::JSDestructibleObject Base;
-    static const unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesGetPropertyNames | JSC::OverridesGetCallData;
+    using Base = JSC::JSDestructibleObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesAnyFormOfGetPropertyNames | JSC::OverridesGetCallData;
 
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -68,43 +68,41 @@ public:
     // Used to invalidate an NPObject asynchronously.
     NPObject* leakNPObject();
 
-    JSC::JSValue callMethod(JSC::ExecState*, NPIdentifier methodName);
-    JSC::JSValue callObject(JSC::ExecState*);
-    JSC::JSValue callConstructor(JSC::ExecState*);
+    JSC::JSValue callMethod(JSC::JSGlobalObject*, JSC::CallFrame*, NPIdentifier methodName);
+    JSC::JSValue callObject(JSC::JSGlobalObject*, JSC::CallFrame*);
+    JSC::JSValue callConstructor(JSC::JSGlobalObject*, JSC::CallFrame*);
 
     DECLARE_INFO;
 
     NPObject* npObject() const { return m_npObject; }
 
-protected:
-    void finishCreation(JSC::JSGlobalObject*);
-
 private:
     static JSC::IsoSubspace* subspaceForImpl(JSC::VM&);
     
     JSNPObject(JSC::JSGlobalObject*, JSC::Structure*, NPRuntimeObjectMap*, NPObject*);
+    void finishCreation(JSC::JSGlobalObject*);
     
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSC::CallType getCallData(JSC::JSCell*, JSC::CallData&);
-    static JSC::ConstructType getConstructData(JSC::JSCell*, JSC::ConstructData&);
+    static JSC::CallData getCallData(JSC::JSCell*);
+    static JSC::CallData getConstructData(JSC::JSCell*);
 
-    static bool getOwnPropertySlot(JSC::JSObject*, JSC::ExecState*, JSC::PropertyName, JSC::PropertySlot&);
-    static bool put(JSC::JSCell*, JSC::ExecState*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
 
-    static bool deleteProperty(JSC::JSCell*, JSC::ExecState*, JSC::PropertyName);
-    static bool deletePropertyByIndex(JSC::JSCell*, JSC::ExecState*, unsigned propertyName);
+    static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool deletePropertyByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned propertyName);
 
-    bool deleteProperty(JSC::ExecState*, NPIdentifier propertyName);
+    bool deleteProperty(JSC::JSGlobalObject*, NPIdentifier propertyName);
 
-    static void getOwnPropertyNames(JSC::JSObject*, JSC::ExecState*, JSC::PropertyNameArray&, JSC::EnumerationMode);
+    static void getOwnPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArray&, JSC::EnumerationMode);
 
-    static JSC::EncodedJSValue propertyGetter(JSC::ExecState*, JSC::EncodedJSValue, JSC::PropertyName);
-    static JSC::EncodedJSValue methodGetter(JSC::ExecState*, JSC::EncodedJSValue, JSC::PropertyName);
-    static JSC::Exception* throwInvalidAccessError(JSC::ExecState*, JSC::ThrowScope&);
+    static JSC::EncodedJSValue propertyGetter(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::PropertyName);
+    static JSC::EncodedJSValue methodGetter(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::PropertyName);
+    static JSC::Exception* throwInvalidAccessError(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
     NPRuntimeObjectMap* m_objectMap;
     NPObject* m_npObject;

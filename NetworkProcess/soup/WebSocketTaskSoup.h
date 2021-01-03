@@ -26,6 +26,7 @@
 #pragma once
 
 #include <libsoup/soup.h>
+#include <wtf/RunLoop.h>
 #include <wtf/glib/GRefPtr.h>
 
 namespace IPC {
@@ -36,11 +37,12 @@ namespace WebKit {
 class NetworkSocketChannel;
 
 class WebSocketTask {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     WebSocketTask(NetworkSocketChannel&, SoupSession*, SoupMessage*, const String& protocol);
     ~WebSocketTask();
 
-    void sendString(const String&, CompletionHandler<void()>&&);
+    void sendString(const IPC::DataReference&, CompletionHandler<void()>&&);
     void sendData(const IPC::DataReference&, CompletionHandler<void()>&&);
     void close(int32_t code, const String& reason);
 
@@ -51,16 +53,22 @@ private:
     void didConnect(GRefPtr<SoupWebsocketConnection>&&);
     void didFail(const String&);
     void didClose(unsigned short code, const String& reason);
+    void delayFailTimerFired();
+
+    String acceptedExtensions() const;
 
     static void didReceiveMessageCallback(WebSocketTask*, SoupWebsocketDataType, GBytes*);
     static void didReceiveErrorCallback(WebSocketTask*, GError*);
     static void didCloseCallback(WebSocketTask*);
 
     NetworkSocketChannel& m_channel;
+    GRefPtr<SoupMessage> m_handshakeMessage;
     GRefPtr<SoupWebsocketConnection> m_connection;
     GRefPtr<GCancellable> m_cancellable;
     bool m_receivedDidFail { false };
     bool m_receivedDidClose { false };
+    String m_delayErrorMessage;
+    RunLoop::Timer<WebSocketTask> m_delayFailTimer;
 };
 
 } // namespace WebKit

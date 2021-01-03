@@ -32,23 +32,23 @@
 #include "NetworkSocketStreamMessages.h"
 #include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
+#include "WebSocketIdentifier.h"
 #include <WebCore/CookieRequestHeaderFieldProxy.h>
 #include <WebCore/SocketStreamError.h>
 #include <WebCore/SocketStreamHandleClient.h>
-#include <pal/SessionID.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebKit {
 using namespace WebCore;
 
 static Lock globalWebSocketStreamMapLock;
-static HashMap<uint64_t, WebSocketStream*>& globalWebSocketStreamMap()
+static HashMap<WebSocketIdentifier, WebSocketStream*>& globalWebSocketStreamMap()
 {
-    static NeverDestroyed<HashMap<uint64_t, WebSocketStream*>> globalMap;
+    static NeverDestroyed<HashMap<WebSocketIdentifier, WebSocketStream*>> globalMap;
     return globalMap;
 }
 
-WebSocketStream* WebSocketStream::streamWithIdentifier(uint64_t identifier)
+WebSocketStream* WebSocketStream::streamWithIdentifier(WebSocketIdentifier identifier)
 {
     LockHolder locker(globalWebSocketStreamMapLock);
     return globalWebSocketStreamMap().get(identifier);
@@ -77,27 +77,28 @@ void WebSocketStream::networkProcessCrashed()
     globalWebSocketStreamMap().clear();
 }
 
-Ref<WebSocketStream> WebSocketStream::create(const URL& url, SocketStreamHandleClient& client, PAL::SessionID sessionID, const String& credentialPartition)
+Ref<WebSocketStream> WebSocketStream::create(const URL& url, SocketStreamHandleClient& client, const String& credentialPartition)
 {
-    return adoptRef(*new WebSocketStream(url, client, sessionID, credentialPartition));
+    return adoptRef(*new WebSocketStream(url, client, credentialPartition));
 }
 
-WebSocketStream::WebSocketStream(const URL& url, WebCore::SocketStreamHandleClient& client, PAL::SessionID sessionID, const String& cachePartition)
+WebSocketStream::WebSocketStream(const URL& url, WebCore::SocketStreamHandleClient& client, const String& cachePartition)
     : SocketStreamHandle(url, client)
+    ,  m_identifier(WebSocketIdentifier::generate())
     , m_client(client)
 {
-    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::CreateSocketStream(url, sessionID, cachePartition, identifier()), 0);
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::CreateSocketStream(url, cachePartition, m_identifier), 0);
 
     LockHolder locker(globalWebSocketStreamMapLock);
-    ASSERT(!globalWebSocketStreamMap().contains(identifier()));
-    globalWebSocketStreamMap().set(identifier(), this);
+    ASSERT(!globalWebSocketStreamMap().contains(m_identifier));
+    globalWebSocketStreamMap().set(m_identifier, this);
 }
 
 WebSocketStream::~WebSocketStream()
 {
     LockHolder locker(globalWebSocketStreamMapLock);
-    ASSERT(globalWebSocketStreamMap().contains(identifier()));
-    globalWebSocketStreamMap().remove(identifier());
+    ASSERT(globalWebSocketStreamMap().contains(m_identifier));
+    globalWebSocketStreamMap().remove(m_identifier);
 }
 
 IPC::Connection* WebSocketStream::messageSenderConnection() const
@@ -107,7 +108,7 @@ IPC::Connection* WebSocketStream::messageSenderConnection() const
 
 uint64_t WebSocketStream::messageSenderDestinationID() const
 {
-    return identifier();
+    return m_identifier.toUInt64();
 }
 
 void WebSocketStream::platformSend(const uint8_t* data, size_t length, Function<void(bool)>&& completionHandler)

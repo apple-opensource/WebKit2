@@ -29,11 +29,11 @@
 #include <WebCore/BitmapImage.h>
 #include <WebCore/GraphicsContextCG.h>
 #include <WebCore/ImageBufferUtilitiesCG.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/PlatformScreen.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <pal/spi/cocoa/IOSurfaceSPI.h>
 #include <wtf/RetainPtr.h>
-#include "CGUtilities.h"
 
 namespace WebKit {
 using namespace WebCore;
@@ -87,34 +87,37 @@ unsigned ShareableBitmap::calculateBytesPerPixel(const Configuration& configurat
 
 std::unique_ptr<GraphicsContext> ShareableBitmap::createGraphicsContext()
 {
+    ASSERT(RunLoop::isMain());
     ref(); // Balanced by deref in releaseBitmapContextData.
 
     unsigned bytesPerPixel = calculateBytesPerPixel(m_configuration);
     RetainPtr<CGContextRef> bitmapContext = adoptCF(CGBitmapContextCreateWithData(data(), m_size.width(), m_size.height(), bytesPerPixel * 8 / 4, calculateBytesPerRow(m_size, m_configuration).unsafeGet(), colorSpace(m_configuration), bitmapInfo(m_configuration), releaseBitmapContextData, this));
-    
+    if (!bitmapContext)
+        return nullptr;
+
     ASSERT(bitmapContext.get());
 
     // We want the origin to be in the top left corner so we flip the backing store context.
     CGContextTranslateCTM(bitmapContext.get(), 0, m_size.height());
     CGContextScaleCTM(bitmapContext.get(), 1, -1);
 
-    return std::make_unique<GraphicsContext>(bitmapContext.get());
+    return makeUnique<GraphicsContext>(bitmapContext.get());
 }
 
 void ShareableBitmap::paint(WebCore::GraphicsContext& context, const IntPoint& destination, const IntRect& source)
 {
-    paintImage(context.platformContext(), makeCGImageCopy().get(), 1, destination, source);
+    drawNativeImage(makeCGImageCopy(), context, 1, destination, source);
 }
 
 void ShareableBitmap::paint(WebCore::GraphicsContext& context, float scaleFactor, const IntPoint& destination, const IntRect& source)
 {
-    paintImage(context.platformContext(), makeCGImageCopy().get(), scaleFactor, destination, source);
+    drawNativeImage(makeCGImageCopy(), context, scaleFactor, destination, source);
 }
 
 RetainPtr<CGImageRef> ShareableBitmap::makeCGImageCopy()
 {
     auto graphicsContext = createGraphicsContext();
-    if (!graphicsContext || !graphicsContext->hasPlatformContext())
+    if (!graphicsContext)
         return nullptr;
 
     RetainPtr<CGImageRef> image = adoptCF(CGBitmapContextCreateImage(graphicsContext->platformContext()));
@@ -139,6 +142,13 @@ RetainPtr<CGImageRef> ShareableBitmap::createCGImage(CGDataProviderRef dataProvi
 
 void ShareableBitmap::releaseBitmapContextData(void* typelessBitmap, void* typelessData)
 {
+    if (!RunLoop::isMain()) {
+        RunLoop::main().dispatch([typelessBitmap, typelessData] {
+            releaseBitmapContextData(typelessBitmap, typelessData);
+        });
+        return;
+    }
+
     ShareableBitmap* bitmap = static_cast<ShareableBitmap*>(typelessBitmap);
     ASSERT_UNUSED(typelessData, bitmap->data() == typelessData);
     bitmap->deref(); // Balanced by ref in createGraphicsContext.
@@ -146,6 +156,13 @@ void ShareableBitmap::releaseBitmapContextData(void* typelessBitmap, void* typel
 
 void ShareableBitmap::releaseDataProviderData(void* typelessBitmap, const void* typelessData, size_t)
 {
+    if (!RunLoop::isMain()) {
+        RunLoop::main().dispatch([typelessBitmap, typelessData] {
+            releaseDataProviderData(typelessBitmap, typelessData, 0);
+        });
+        return;
+    }
+
     ShareableBitmap* bitmap = static_cast<ShareableBitmap*>(typelessBitmap);
     ASSERT_UNUSED(typelessData, bitmap->data() == typelessData);
     bitmap->deref(); // Balanced by ref in createCGImage.

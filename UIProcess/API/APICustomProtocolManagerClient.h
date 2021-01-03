@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "LegacyCustomProtocolID.h"
 #include <wtf/Forward.h>
 
 namespace WebKit {
@@ -38,11 +39,12 @@ class ResourceRequest;
 namespace API {
 
 class CustomProtocolManagerClient {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     virtual ~CustomProtocolManagerClient() { }
 
-    virtual void startLoading(WebKit::LegacyCustomProtocolManagerProxy&, uint64_t /* customProtocolID */, const WebCore::ResourceRequest&) { }
-    virtual void stopLoading(WebKit::LegacyCustomProtocolManagerProxy&, uint64_t /* customProtocolID */) { }
+    virtual void startLoading(WebKit::LegacyCustomProtocolManagerProxy&, WebKit::LegacyCustomProtocolID, const WebCore::ResourceRequest&) { }
+    virtual void stopLoading(WebKit::LegacyCustomProtocolManagerProxy&, WebKit::LegacyCustomProtocolID) { }
 
     virtual void invalidate(WebKit::LegacyCustomProtocolManagerProxy&) { }
 };

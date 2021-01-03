@@ -252,7 +252,7 @@ void RemoteLayerTreeHost::createLayer(const RemoteLayerTreeTransaction::LayerCre
 std::unique_ptr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeTransaction::LayerCreationProperties& properties)
 {
     auto makeWithLayer = [&] (RetainPtr<CALayer> layer) {
-        return std::make_unique<RemoteLayerTreeNode>(properties.layerID, WTFMove(layer));
+        return makeUnique<RemoteLayerTreeNode>(properties.layerID, WTFMove(layer));
     };
     auto makeAdoptingLayer = [&] (CALayer* layer) {
         return makeWithLayer(adoptNS(layer));
@@ -307,7 +307,6 @@ void RemoteLayerTreeHost::detachRootLayer()
     m_rootNode = nullptr;
 }
 
-#if HAVE(IOSURFACE)
 static void recursivelyMapIOSurfaceBackingStore(CALayer *layer)
 {
     if (layer.contents && CFGetTypeID((__bridge CFTypeRef)layer.contents) == CAMachPortGetTypeID()) {
@@ -319,13 +318,10 @@ static void recursivelyMapIOSurfaceBackingStore(CALayer *layer)
     for (CALayer *sublayer in layer.sublayers)
         recursivelyMapIOSurfaceBackingStore(sublayer);
 }
-#endif
 
 void RemoteLayerTreeHost::mapAllIOSurfaceBackingStore()
 {
-#if HAVE(IOSURFACE)
     recursivelyMapIOSurfaceBackingStore(rootLayer());
-#endif
 }
 
 } // namespace WebKit

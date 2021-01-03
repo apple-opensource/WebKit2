@@ -32,11 +32,14 @@
 namespace WebKit {
 
 class ResourceLoadStatisticsMemoryStore;
+class ResourceLoadStatisticsDatabaseStore;
+struct PrevalentResourceDatabaseTelemetry;
+enum class NotifyPagesForTesting : bool { No, Yes };
 
 namespace WebResourceLoadStatisticsTelemetry {
     
-void calculateAndSubmit(const ResourceLoadStatisticsMemoryStore&);
-void setNotifyPagesWhenTelemetryWasCaptured(bool);
+void calculateAndSubmit(const ResourceLoadStatisticsMemoryStore&, NotifyPagesForTesting = NotifyPagesForTesting::No);
+void submitTelemetry(const ResourceLoadStatisticsDatabaseStore&, PrevalentResourceDatabaseTelemetry&, NotifyPagesForTesting);
     
 }
 }

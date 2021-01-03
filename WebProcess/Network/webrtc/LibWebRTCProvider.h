@@ -50,11 +50,18 @@ public:
     LibWebRTCProvider() { m_useNetworkThreadWithSocketServer = false; }
 
 private:
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(webrtc::PeerConnectionObserver&, webrtc::PeerConnectionInterface::RTCConfiguration&&) final;
+    std::unique_ptr<SuspendableSocketFactory> createSocketFactory(String&& /* userAgent */) final;
 
-    void unregisterMDNSNames(uint64_t documentIdentifier) final;
-    void registerMDNSName(PAL::SessionID, uint64_t documentIdentifier, const String& ipAddress, CompletionHandler<void(MDNSNameOrError&&)>&&) final;
+    rtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(webrtc::PeerConnectionObserver&, rtc::PacketSocketFactory*, webrtc::PeerConnectionInterface::RTCConfiguration&&) final;
+
+    void unregisterMDNSNames(WebCore::DocumentIdentifier) final;
+    void registerMDNSName(WebCore::DocumentIdentifier, const String& ipAddress, CompletionHandler<void(MDNSNameOrError&&)>&&) final;
     void disableNonLocalhostConnections() final;
+    void startedNetworkThread() final;
+
+#if PLATFORM(COCOA)
+    std::unique_ptr<webrtc::VideoDecoderFactory> createDecoderFactory() final;
+#endif
 };
 #else
 using LibWebRTCProvider = WebCore::LibWebRTCProvider;

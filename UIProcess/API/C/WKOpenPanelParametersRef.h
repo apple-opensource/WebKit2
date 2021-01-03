@@ -37,13 +37,15 @@
 extern "C" {
 #endif
 
-WK_EXPORT WKTypeID WKOpenPanelParametersGetTypeID();
+WK_EXPORT WKTypeID WKOpenPanelParametersGetTypeID(void);
 
 WK_EXPORT bool WKOpenPanelParametersGetAllowsDirectories(WKOpenPanelParametersRef parameters);
 WK_EXPORT bool WKOpenPanelParametersGetAllowsMultipleFiles(WKOpenPanelParametersRef parameters);
 
 WK_EXPORT WKArrayRef WKOpenPanelParametersCopyAcceptedMIMETypes(WKOpenPanelParametersRef parameters);
 WK_EXPORT WKArrayRef WKOpenPanelParametersCopyAcceptedFileExtensions(WKOpenPanelParametersRef parameters);
+
+WK_EXPORT WKArrayRef WKOpenPanelParametersCopyAllowedMIMETypes(WKOpenPanelParametersRef parameters);
 
 /* DEPRECATED - Please use WKOpenPanelParametersGetCaptureEnabled() instead. */
 WK_EXPORT WKStringRef WKOpenPanelParametersCopyCapture(WKOpenPanelParametersRef parameters);

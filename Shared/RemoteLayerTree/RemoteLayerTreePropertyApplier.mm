@@ -29,11 +29,13 @@
 #import "PlatformCAAnimationRemote.h"
 #import "PlatformCALayerRemote.h"
 #import "RemoteLayerTreeHost.h"
+#import "RemoteLayerTreeViews.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/PlatformCAFilters.h>
 #import <WebCore/ScrollbarThemeMac.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/BlockObjCExceptions.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIView.h>
@@ -67,11 +69,25 @@
     }
 
     // Remove views at the end.
-    NSUInteger remainingSubviews = self.subviews.count;
-    for (NSUInteger i = currIndex; i < remainingSubviews; ++i)
-        [[self.subviews objectAtIndex:currIndex] removeFromSuperview];
+    NSMutableArray *viewsToRemove = nil;
+    auto appendViewToRemove = [&viewsToRemove](UIView *view) {
+        if (!viewsToRemove)
+            viewsToRemove = [[NSMutableArray alloc] init];
 
-    ASSERT([self.subviews isEqualToArray:newSubviews]);
+        [viewsToRemove addObject:view];
+    };
+
+    NSUInteger remainingSubviews = self.subviews.count;
+    for (NSUInteger i = currIndex; i < remainingSubviews; ++i) {
+        UIView *subview = [self.subviews objectAtIndex:i];
+        if ([subview conformsToProtocol:@protocol(WKContentControlled)])
+            appendViewToRemove(subview);
+    }
+
+    if (viewsToRemove) {
+        [viewsToRemove makeObjectsPerformSelector:@selector(removeFromSuperview)];
+        [viewsToRemove release];
+    }
 }
 
 @end
@@ -214,10 +230,10 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
         CAShapeLayer *shapeLayer = (CAShapeLayer *)layer;
         switch (properties.windRule) {
         case WindRule::NonZero:
-            shapeLayer.fillRule = @"non-zero";
+            shapeLayer.fillRule = kCAFillRuleNonZero;
             break;
         case WindRule::EvenOdd:
-            shapeLayer.fillRule = @"even-odd";
+            shapeLayer.fillRule = kCAFillRuleEvenOdd;
             break;
         }
     }
@@ -255,7 +271,7 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
 
 void RemoteLayerTreePropertyApplier::applyProperties(RemoteLayerTreeNode& node, RemoteLayerTreeHost* layerTreeHost, const RemoteLayerTreeTransaction::LayerProperties& properties, const RelatedLayerMap& relatedLayers, RemoteLayerBackingStore::LayerContentsType layerContentsType)
 {
-    BEGIN_BLOCK_OBJC_EXCEPTIONS;
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
 
     applyPropertiesToLayer(node.layer(), layerTreeHost, properties, layerContentsType);
     updateChildren(node, properties, relatedLayers);
@@ -268,7 +284,7 @@ void RemoteLayerTreePropertyApplier::applyProperties(RemoteLayerTreeNode& node, 
     applyPropertiesToUIView(node.uiView(), properties, relatedLayers);
 #endif
 
-    END_BLOCK_OBJC_EXCEPTIONS;
+    END_BLOCK_OBJC_EXCEPTIONS
 }
 
 void RemoteLayerTreePropertyApplier::updateChildren(RemoteLayerTreeNode& node, const RemoteLayerTreeTransaction::LayerProperties& properties, const RelatedLayerMap& relatedLayers)
@@ -298,35 +314,28 @@ void RemoteLayerTreePropertyApplier::updateChildren(RemoteLayerTreeNode& node, c
 
     if (hasViewChildren()) {
         ASSERT(node.uiView());
-
-        RetainPtr<NSMutableArray> subviews = adoptNS([[NSMutableArray alloc] initWithCapacity:properties.children.size()]);
-        for (auto& child : properties.children) {
+        [contentView() _web_setSubviews:createNSArray(properties.children, [&] (auto& child) -> UIView * {
             auto* childNode = relatedLayers.get(child);
             ASSERT(childNode);
             if (!childNode)
-                continue;
+                return nil;
             ASSERT(childNode->uiView());
-            [subviews addObject:childNode->uiView()];
-        }
-
-        [contentView() _web_setSubviews:subviews.get()];
+            return childNode->uiView();
+        }).get()];
         return;
     }
 #endif
 
-    RetainPtr<NSMutableArray> sublayers = adoptNS([[NSMutableArray alloc] initWithCapacity:properties.children.size()]);
-    for (auto& child : properties.children) {
+    node.layer().sublayers = createNSArray(properties.children, [&] (auto& child) -> CALayer * {
         auto* childNode = relatedLayers.get(child);
         ASSERT(childNode);
         if (!childNode)
-            continue;
+            return nil;
 #if PLATFORM(IOS_FAMILY)
         ASSERT(!childNode->uiView());
 #endif
-        [sublayers addObject:childNode->layer()];
-    }
-
-    node.layer().sublayers = sublayers.get();
+        return childNode->layer();
+    }).get();
 }
 
 void RemoteLayerTreePropertyApplier::updateMask(RemoteLayerTreeNode& node, const RemoteLayerTreeTransaction::LayerProperties& properties, const RelatedLayerMap& relatedLayers)

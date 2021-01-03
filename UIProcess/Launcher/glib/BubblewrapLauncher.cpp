@@ -30,6 +30,16 @@
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 
+#if PLATFORM(GTK)
+#include "WaylandCompositor.h"
+#endif
+
+#if PLATFORM(GTK)
+#define BASE_DIRECTORY "webkitgtk"
+#elif PLATFORM(WPE)
+#define BASE_DIRECTORY "wpe"
+#endif
+
 #if __has_include(<sys/memfd.h>)
 
 #include <sys/memfd.h>
@@ -125,15 +135,15 @@ class XDGDBusProxyLauncher {
 public:
     void setAddress(const char* dbusAddress, DBusAddressType addressType)
     {
-        GUniquePtr<char> dbusPath = dbusAddressToPath(dbusAddress, addressType);
-        if (!dbusPath.get())
+        CString dbusPath = dbusAddressToPath(dbusAddress, addressType);
+        if (dbusPath.isNull())
             return;
 
-        GUniquePtr<char> appRunDir(g_build_filename(g_get_user_runtime_dir(), g_get_prgname(), nullptr));
-        m_proxyPath = makeProxyPath(appRunDir.get()).get();
+        GUniquePtr<char> appRunDir(g_build_filename(g_get_user_runtime_dir(), BASE_DIRECTORY, nullptr));
+        m_proxyPath = makeProxyPath(appRunDir.get());
 
         m_socket = dbusAddress;
-        m_path = dbusPath.get();
+        m_path = WTFMove(dbusPath);
     }
 
     bool isRunning() const { return m_isRunning; };
@@ -154,7 +164,7 @@ public:
             return;
 
         int syncFds[2];
-        if (pipe2 (syncFds, O_CLOEXEC) == -1)
+        if (pipe2(syncFds, O_CLOEXEC) == -1)
             g_error("Failed to make syncfds for dbus-proxy: %s", g_strerror(errno));
 
         GUniquePtr<char> syncFdStr(g_strdup_printf("--fd=%d", syncFds[1]));
@@ -200,7 +210,7 @@ public:
         char out;
         // We need to ensure the proxy has created the socket.
         // FIXME: This is more blocking IO.
-        if (read (syncFds[0], &out, 1) != 1)
+        if (read(syncFds[0], &out, 1) != 1)
             g_error("Failed to fully launch dbus-proxy %s", g_strerror(errno));
 
         m_isRunning = true;
@@ -213,42 +223,42 @@ private:
         fcntl(fd, F_SETFD, 0); // Unset CLOEXEC
     }
 
-    static GUniquePtr<char> makeProxyPath(const char* appRunDir)
+    static CString makeProxyPath(const char* appRunDir)
     {
         if (g_mkdir_with_parents(appRunDir, 0700) == -1) {
             g_warning("Failed to mkdir for dbus proxy (%s): %s", appRunDir, g_strerror(errno));
-            return GUniquePtr<char>(nullptr);
+            return { };
         }
 
         GUniquePtr<char> proxySocketTemplate(g_build_filename(appRunDir, "dbus-proxy-XXXXXX", nullptr));
         int fd;
         if ((fd = g_mkstemp(proxySocketTemplate.get())) == -1) {
             g_warning("Failed to make socket file for dbus proxy: %s", g_strerror(errno));
-            return GUniquePtr<char>(nullptr);
+            return { };
         }
 
         close(fd);
-        return proxySocketTemplate;
+        return CString(proxySocketTemplate.get());
     };
 
-    static GUniquePtr<char> dbusAddressToPath(const char* address, DBusAddressType addressType = DBusAddressType::Normal)
+    static CString dbusAddressToPath(const char* address, DBusAddressType addressType = DBusAddressType::Normal)
     {
         if (!address)
-            return nullptr;
+            return { };
 
         if (!g_str_has_prefix(address, "unix:"))
-            return nullptr;
+            return { };
 
         const char* path = strstr(address, addressType == DBusAddressType::Abstract ? "abstract=" : "path=");
         if (!path)
-            return nullptr;
+            return { };
 
         path += strlen(addressType == DBusAddressType::Abstract ? "abstract=" : "path=");
         const char* pathEnd = path;
         while (*pathEnd && *pathEnd != ',')
             pathEnd++;
 
-        return GUniquePtr<char>(g_strndup(path, pathEnd - path));
+        return CString(path, pathEnd - path);
 }
 
     CString m_socket;
@@ -266,7 +276,7 @@ enum class BindFlags {
 
 static void bindIfExists(Vector<CString>& args, const char* path, BindFlags bindFlags = BindFlags::ReadOnly)
 {
-    if (!path)
+    if (!path || path[0] == '\0')
         return;
 
     const char* bindType;
@@ -294,10 +304,16 @@ static void bindDBusSession(Vector<CString>& args, XDGDBusProxyLauncher& proxy)
 static void bindX11(Vector<CString>& args)
 {
     const char* display = g_getenv("DISPLAY");
-    if (!display || display[0] != ':' || !g_ascii_isdigit(const_cast<char*>(display)[1]))
-        display = ":0";
-    GUniquePtr<char> x11File(g_strdup_printf("/tmp/.X11-unix/X%s", display + 1));
-    bindIfExists(args, x11File.get(), BindFlags::ReadWrite);
+    if (display && display[0] == ':' && g_ascii_isdigit(const_cast<char*>(display)[1])) {
+        const char* displayNumber = &display[1];
+        const char* displayNumberEnd = displayNumber;
+        while (g_ascii_isdigit(*displayNumberEnd))
+            displayNumberEnd++;
+
+        GUniquePtr<char> displayString(g_strndup(displayNumber, displayNumberEnd - displayNumber));
+        GUniquePtr<char> x11File(g_strdup_printf("/tmp/.X11-unix/X%s", displayString.get()));
+        bindIfExists(args, x11File.get(), BindFlags::ReadWrite);
+    }
 
     const char* xauth = g_getenv("XAUTHORITY");
     if (!xauth) {
@@ -311,6 +327,9 @@ static void bindX11(Vector<CString>& args)
 #if PLATFORM(WAYLAND) && USE(EGL)
 static void bindWayland(Vector<CString>& args)
 {
+    if (PlatformDisplay::sharedDisplay().type() != PlatformDisplay::Type::Wayland)
+        return;
+
     const char* display = g_getenv("WAYLAND_DISPLAY");
     if (!display)
         display = "wayland-0";
@@ -318,6 +337,14 @@ static void bindWayland(Vector<CString>& args)
     const char* runtimeDir = g_get_user_runtime_dir();
     GUniquePtr<char> waylandRuntimeFile(g_build_filename(runtimeDir, display, nullptr));
     bindIfExists(args, waylandRuntimeFile.get(), BindFlags::ReadWrite);
+
+#if !USE(WPE_RENDERER)
+    if (WaylandCompositor::singleton().isRunning()) {
+        String displayName = WaylandCompositor::singleton().displayName();
+        waylandRuntimeFile.reset(g_build_filename(runtimeDir, displayName.utf8().data(), nullptr));
+        bindIfExists(args, waylandRuntimeFile.get(), BindFlags::ReadWrite);
+    }
+#endif
 }
 #endif
 
@@ -354,6 +381,18 @@ static void bindPulse(Vector<CString>& args)
     bindIfExists(args, "/dev/snd", BindFlags::Device);
 }
 
+static void bindSndio(Vector<CString>& args)
+{
+    bindIfExists(args, "/tmp/sndio", BindFlags::ReadWrite);
+
+    GUniquePtr<char> sndioUidDir(g_strdup_printf("/tmp/sndio-%d", getuid()));
+    bindIfExists(args, sndioUidDir.get(), BindFlags::ReadWrite);
+
+    const char* homeDir = g_get_home_dir();
+    GUniquePtr<char> sndioHomeDir(g_build_filename(homeDir, ".sndio", nullptr));
+    bindIfExists(args, sndioHomeDir.get(), BindFlags::ReadWrite);
+}
+
 static void bindFonts(Vector<CString>& args)
 {
     const char* configDir = g_get_user_config_dir();
@@ -363,17 +402,20 @@ static void bindFonts(Vector<CString>& args)
 
     // Configs can include custom dirs but then we have to parse them...
     GUniquePtr<char> fontConfig(g_build_filename(configDir, "fontconfig", nullptr));
+    GUniquePtr<char> fontConfigHome(g_build_filename(homeDir, ".fontconfig", nullptr));
     GUniquePtr<char> fontCache(g_build_filename(cacheDir, "fontconfig", nullptr));
     GUniquePtr<char> fontHomeConfig(g_build_filename(homeDir, ".fonts.conf", nullptr));
     GUniquePtr<char> fontHomeConfigDir(g_build_filename(configDir, ".fonts.conf.d", nullptr));
     GUniquePtr<char> fontData(g_build_filename(dataDir, "fonts", nullptr));
     GUniquePtr<char> fontHomeData(g_build_filename(homeDir, ".fonts", nullptr));
     bindIfExists(args, fontConfig.get());
+    bindIfExists(args, fontConfigHome.get());
     bindIfExists(args, fontCache.get(), BindFlags::ReadWrite);
     bindIfExists(args, fontHomeConfig.get());
     bindIfExists(args, fontHomeConfigDir.get());
     bindIfExists(args, fontData.get());
     bindIfExists(args, fontHomeData.get());
+    bindIfExists(args, "/var/cache/fontconfig"); // Used by Debian.
 }
 
 #if PLATFORM(GTK)
@@ -539,8 +581,8 @@ static int setupSeccomp()
     // can do, and we should support code portability between different
     // container tools.
     //
-    // This syscall blacklist is copied from linux-user-chroot, which was in turn
-    // clearly influenced by the Sandstorm.io blacklist.
+    // This syscall block list is copied from linux-user-chroot, which was in turn
+    // clearly influenced by the Sandstorm.io block list.
     //
     // If you make any changes here, I suggest sending the changes along
     // to other sandbox maintainers. Using the libseccomp list is also
@@ -548,7 +590,7 @@ static int setupSeccomp()
     // https://groups.google.com/forum/#!topic/libseccomp
     //
     // A non-exhaustive list of links to container tooling that might
-    // want to share this blacklist:
+    // want to share this block list:
     //
     //  https://github.com/sandstorm-io/sandstorm
     //    in src/sandstorm/supervisor.c++
@@ -556,12 +598,21 @@ static int setupSeccomp()
     //    in common/flatpak-run.c
     //  https://git.gnome.org/browse/linux-user-chroot
     //    in src/setup-seccomp.c
+
+#if defined(__s390__) || defined(__s390x__) || defined(__CRIS__)
+    // Architectures with CONFIG_CLONE_BACKWARDS2: the child stack
+    // and flags arguments are reversed so the flags come second.
+    struct scmp_arg_cmp cloneArg = SCMP_A1(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER);
+#else
+    // Normally the flags come first.
     struct scmp_arg_cmp cloneArg = SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER);
+#endif
+
     struct scmp_arg_cmp ttyArg = SCMP_A1(SCMP_CMP_MASKED_EQ, 0xFFFFFFFFu, TIOCSTI);
     struct {
         int scall;
         struct scmp_arg_cmp* arg;
-    } syscallBlacklist[] = {
+    } syscallBlockList[] = {
         // Block dmesg
         { SCMP_SYS(syslog), nullptr },
         // Useless old syscall.
@@ -607,11 +658,11 @@ static int setupSeccomp()
     if (!seccomp)
         g_error("Failed to init seccomp");
 
-    for (auto& rule : syscallBlacklist) {
+    for (auto& rule : syscallBlockList) {
         int scall = rule.scall;
         int r;
         if (rule.arg)
-            r = seccomp_rule_add(seccomp, SCMP_ACT_ERRNO(EPERM), scall, 1, rule.arg);
+            r = seccomp_rule_add(seccomp, SCMP_ACT_ERRNO(EPERM), scall, 1, *rule.arg);
         else
             r = seccomp_rule_add(seccomp, SCMP_ACT_ERRNO(EPERM), scall, 0);
         if (r == -EFAULT) {
@@ -666,14 +717,6 @@ static int createFlatpakInfo()
 GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const ProcessLauncher::LaunchOptions& launchOptions, char** argv, GError **error)
 {
     ASSERT(launcher);
-
-#if ENABLE(NETSCAPE_PLUGIN_API)
-    // It is impossible to know what access arbitrary plugins need and since it is for legacy
-    // reasons lets just leave it unsandboxed.
-    if (launchOptions.processType == ProcessLauncher::ProcessType::Plugin64
-        || launchOptions.processType == ProcessLauncher::ProcessType::Plugin32)
-        return adoptGRef(g_subprocess_launcher_spawnv(launcher, argv, error));
-#endif
 
     // For now we are just considering the network process trusted as it
     // requires a lot of access but doesn't execute arbitrary code like
@@ -777,6 +820,7 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
         bindDBusSession(sandboxArgs, proxy);
         // FIXME: We should move to Pipewire as soon as viable, Pulse doesn't restrict clients atm.
         bindPulse(sandboxArgs);
+        bindSndio(sandboxArgs);
         bindFonts(sandboxArgs);
         bindGStreamerData(sandboxArgs);
         bindOpenGL(sandboxArgs);

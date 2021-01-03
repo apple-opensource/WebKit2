@@ -85,12 +85,12 @@ void WebPageOverlay::clear()
 
 void WebPageOverlay::willMoveToPage(PageOverlay&, Page* page)
 {
-    m_client->willMoveToPage(*this, page ? WebPage::fromCorePage(page) : nullptr);
+    m_client->willMoveToPage(*this, page ? &WebPage::fromCorePage(*page) : nullptr);
 }
 
 void WebPageOverlay::didMoveToPage(PageOverlay&, Page* page)
 {
-    m_client->didMoveToPage(*this, page ? WebPage::fromCorePage(page) : nullptr);
+    m_client->didMoveToPage(*this, page ? &WebPage::fromCorePage(*page) : nullptr);
 }
 
 void WebPageOverlay::drawRect(PageOverlay&, GraphicsContext& context, const IntRect& dirtyRect)
@@ -109,9 +109,9 @@ void WebPageOverlay::didScrollFrame(PageOverlay&, Frame& frame)
 }
 
 #if PLATFORM(MAC)
-DDActionContext *WebPageOverlay::actionContextForResultAtPoint(FloatPoint location, RefPtr<WebCore::Range>& rangeHandle)
+auto WebPageOverlay::actionContextForResultAtPoint(FloatPoint location) -> Optional<ActionContext>
 {
-    return m_client->actionContextForResultAtPoint(*this, location, rangeHandle);
+    return m_client->actionContextForResultAtPoint(*this, location);
 }
 
 void WebPageOverlay::dataDetectorsDidPresentUI()

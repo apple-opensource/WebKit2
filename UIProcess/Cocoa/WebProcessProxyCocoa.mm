@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,7 +37,13 @@
 #import "WebProcessPool.h"
 #import <sys/sysctl.h>
 #import <wtf/NeverDestroyed.h>
+#import <wtf/Scope.h>
+#import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/spi/darwin/SandboxSPI.h>
+
+#if ENABLE(REMOTE_INSPECTOR)
+#import <JavaScriptCore/RemoteInspectorConstants.h>
+#endif
 
 namespace WebKit {
 
@@ -76,7 +82,7 @@ RefPtr<ObjCObjectGraph> WebProcessProxy::transformHandlesToObjects(ObjCObjectGra
         RetainPtr<id> transformObject(id object) const override
         {
             if (auto* handle = dynamic_objc_cast<WKBrowsingContextHandle>(object)) {
-                if (auto* webPageProxy = m_webProcessProxy.webPage(handle.pageID)) {
+                if (auto* webPageProxy = m_webProcessProxy.webPage(handle.pageProxyID)) {
                     ALLOW_DEPRECATED_DECLARATIONS_BEGIN
                     return [WKBrowsingContextController _browsingContextControllerForPageRef:toAPI(webPageProxy)];
                     ALLOW_DEPRECATED_DECLARATIONS_END
@@ -189,23 +195,63 @@ void WebProcessProxy::releaseHighPerformanceGPU()
 }
 #endif
 
-#if PLATFORM(IOS_FAMILY)
-void WebProcessProxy::processWasUnexpectedlyUnsuspended()
+#if ENABLE(REMOTE_INSPECTOR)
+void WebProcessProxy::enableRemoteInspectorIfNeeded()
 {
-    if (m_throttler.shouldBeRunnable()) {
-        // The process becoming unsuspended was not unexpected; it likely was notified of its running state
-        // before receiving a procsessDidResume() message from the UIProcess.
+    if (!CFPreferencesGetAppIntegerValue(WIRRemoteInspectorEnabledKey, WIRRemoteInspectorDomainName, nullptr))
         return;
-    }
-
-    // The WebProcess was awakened by something other than the UIProcess. Take out an assertion for a
-    // limited duration to allow whatever task needs to be accomplished time to complete.
-    RELEASE_LOG(ProcessSuspension, "%p - WebProcessProxy::processWasUnexpectedlyUnsuspended()", this);
-    auto backgroundActivityTimeoutHandler = [activityToken = m_throttler.backgroundActivityToken(), weakThis = makeWeakPtr(this)] {
-        RELEASE_LOG(ProcessSuspension, "%p - WebProcessProxy::processWasUnexpectedlyUnsuspended() - lambda, background activity timed out", weakThis.get());
-    };
-    m_unexpectedActivityTimer = std::make_unique<WebCore::DeferrableOneShotTimer>(WTFMove(backgroundActivityTimeoutHandler), unexpectedActivityDuration);
+    SandboxExtension::Handle handle;
+    auto auditToken = connection() ? connection()->getAuditToken() : WTF::nullopt;
+    if (SandboxExtension::createHandleForMachLookup("com.apple.webinspector"_s, auditToken, handle))
+        send(Messages::WebProcess::EnableRemoteWebInspector(handle), 0);
 }
 #endif
+
+void WebProcessProxy::unblockAccessibilityServerIfNeeded()
+{
+    if (m_hasSentMessageToUnblockAccessibilityServer)
+        return;
+#if PLATFORM(IOS_FAMILY)
+    if (!_AXSApplicationAccessibilityEnabled())
+        return;
+#endif
+    if (!processIdentifier())
+        return;
+    if (!canSendMessage())
+        return;
+
+    SandboxExtension::HandleArray handleArray;
+#if PLATFORM(IOS_FAMILY)
+    handleArray = SandboxExtension::createHandlesForMachLookup({ "com.apple.iphone.axserver-systemwide"_s, "com.apple.frontboard.systemappservices"_s }, connection() ? connection()->getAuditToken() : WTF::nullopt);
+    ASSERT(handleArray.size() == 2);
+#endif
+
+    send(Messages::WebProcess::UnblockServicesRequiredByAccessibility(handleArray), 0);
+    m_hasSentMessageToUnblockAccessibilityServer = true;
+}
+
+#if ENABLE(CFPREFS_DIRECT_MODE)
+void WebProcessProxy::unblockPreferenceServiceIfNeeded()
+{
+    if (m_hasSentMessageToUnblockPreferenceService)
+        return;
+    if (!processIdentifier())
+        return;
+    if (!canSendMessage())
+        return;
+
+    auto handleArray = SandboxExtension::createHandlesForMachLookup({ "com.apple.cfprefsd.agent"_s, "com.apple.cfprefsd.daemon"_s }, connection() ? connection()->getAuditToken() : WTF::nullopt);
+    ASSERT(handleArray.size() == 2);
+    
+    send(Messages::WebProcess::UnblockPreferenceService(WTFMove(handleArray)), 0);
+    m_hasSentMessageToUnblockPreferenceService = true;
+}
+#endif
+
+Vector<String> WebProcessProxy::platformOverrideLanguages() const
+{
+    static const NeverDestroyed<Vector<String>> overrideLanguages = makeVector<String>([[NSUserDefaults standardUserDefaults] valueForKey:@"AppleLanguages"]);
+    return overrideLanguages;
+}
 
 }

@@ -213,6 +213,7 @@ public:
 #endif
 
 struct PrintPagesData {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
     PrintPagesData(WebPrintOperationGtk* printOperation)
         : printOperation(printOperation)
         , totalPrinted(-1)
@@ -726,7 +727,7 @@ void WebPrintOperationGtk::print(cairo_surface_t* surface, double xDPI, double y
 {
     ASSERT(m_printContext);
 
-    auto data = std::make_unique<PrintPagesData>(this);
+    auto data = makeUnique<PrintPagesData>(this);
     if (!data->isValid) {
         cairo_surface_finish(surface);
         printDone(invalidPageRangeToPrint(frameURL()));
@@ -742,7 +743,7 @@ void WebPrintOperationGtk::print(cairo_surface_t* surface, double xDPI, double y
     // operation has finished. See https://bugs.webkit.org/show_bug.cgi?id=122801.
     unsigned idlePriority = m_printMode == PrintInfo::PrintModeSync ? G_PRIORITY_DEFAULT - 10 : G_PRIORITY_DEFAULT_IDLE + 10;
     GMainLoop* mainLoop = data->mainLoop.get();
-    m_printPagesIdleId = gdk_threads_add_idle_full(idlePriority, printPagesIdle, data.release(), printPagesIdleDone);
+    m_printPagesIdleId = g_idle_add_full(idlePriority, printPagesIdle, data.release(), printPagesIdleDone);
     if (m_printMode == PrintInfo::PrintModeSync) {
         ASSERT(mainLoop);
         g_main_loop_run(mainLoop);

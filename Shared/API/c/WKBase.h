@@ -38,6 +38,8 @@
 #include <WebKit/WKBaseMac.h>
 #elif defined(_WIN32)
 #include <WebKit/WKBaseWin.h>
+#elif defined(__SCE__)
+#include <WebKit/WKBasePlayStation.h>
 #endif
 
 /* WebKit2 shared types */
@@ -62,8 +64,6 @@ typedef const struct OpaqueWKGraphicsContext* WKGraphicsContextRef;
 typedef const struct OpaqueWKImage* WKImageRef;
 typedef const struct OpaqueWKPointRef* WKPointRef;
 typedef const struct OpaqueWKRectRef* WKRectRef;
-typedef const struct OpaqueWKRenderLayer* WKRenderLayerRef;
-typedef const struct OpaqueWKRenderObject* WKRenderObjectRef;
 typedef const struct OpaqueWKSecurityOrigin* WKSecurityOriginRef;
 typedef const struct OpaqueWKSerializedScriptValue* WKSerializedScriptValueRef;
 typedef const struct OpaqueWKSizeRef* WKSizeRef;
@@ -100,6 +100,7 @@ typedef const struct OpaqueWKGeolocationManager* WKGeolocationManagerRef;
 typedef const struct OpaqueWKGeolocationPermissionRequest* WKGeolocationPermissionRequestRef;
 typedef const struct OpaqueWKGeolocationPosition* WKGeolocationPositionRef;
 typedef const struct OpaqueWKGrammarDetail* WKGrammarDetailRef;
+typedef const struct OpaqueWKHTTPCookieStore* WKHTTPCookieStoreRef;
 typedef const struct OpaqueWKHitTestResult* WKHitTestResultRef;
 typedef const struct OpaqueWKIconDatabase* WKIconDatabaseRef;
 typedef const struct OpaqueWKInspector* WKInspectorRef;
@@ -138,6 +139,7 @@ typedef const struct OpaqueWKUserMediaPermissionCheck* WKUserMediaPermissionChec
 typedef const struct OpaqueWKUserMediaPermissionRequest* WKUserMediaPermissionRequestRef;
 typedef const struct OpaqueWKUserScript* WKUserScriptRef;
 typedef const struct OpaqueWKViewportAttributes* WKViewportAttributesRef;
+typedef const struct OpaqueWKWebsiteDataConfigurationStore* WKWebsiteDataStoreConfigurationRef;
 typedef const struct OpaqueWKWebsiteDataStore* WKWebsiteDataStoreRef;
 typedef const struct OpaqueWKWebsitePolicies* WKWebsitePoliciesRef;
 typedef const struct OpaqueWKWindowFeatures* WKWindowFeaturesRef;

@@ -35,6 +35,7 @@
 #include "WebKitSettingsPrivate.h"
 #include "WebPageProxy.h"
 #include "WebPreferences.h"
+#include <WebCore/HTTPParsers.h>
 #include <WebCore/PlatformScreen.h>
 #include <WebCore/TextEncodingRegistry.h>
 #include <WebCore/UserAgent.h>
@@ -77,6 +78,7 @@ struct _WebKitSettingsPrivate {
     CString pictographFontFamily;
     CString defaultCharset;
     CString userAgent;
+    CString mediaContentTypesRequiringHardwareSupport;
     bool allowModalDialogs { false };
     bool zoomTextOnly { false };
     double screenDpi { 96 };
@@ -162,12 +164,14 @@ enum {
     PROP_ENABLE_MEDIA_CAPABILITIES,
     PROP_ALLOW_FILE_ACCESS_FROM_FILE_URLS,
     PROP_ALLOW_UNIVERSAL_ACCESS_FROM_FILE_URLS,
+    PROP_ALLOW_TOP_NAVIGATION_TO_DATA_URLS,
 #if PLATFORM(GTK)
     PROP_HARDWARE_ACCELERATION_POLICY,
     PROP_ENABLE_BACK_FORWARD_NAVIGATION_GESTURES,
 #endif
     PROP_ENABLE_JAVASCRIPT_MARKUP,
     PROP_ENABLE_MEDIA,
+    PROP_MEDIA_CONTENT_TYPES_REQUIRING_HARDWARE_SUPPORT,
 };
 
 static void webKitSettingsDispose(GObject* object)
@@ -183,9 +187,6 @@ static void webKitSettingsConstructed(GObject* object)
     WebKitSettings* settings = WEBKIT_SETTINGS(object);
     WebPreferences* prefs = settings->priv->preferences.get();
     prefs->setShouldRespectImageOrientation(true);
-
-    if (g_getenv("WEBKIT_WEBRTC_DISABLE_UNIFIED_PLAN"))
-        prefs->setWebRTCUnifiedPlanEnabled(FALSE);
 
     bool mediaStreamEnabled = prefs->mediaStreamEnabled();
     prefs->setMediaDevicesEnabled(mediaStreamEnabled);
@@ -239,7 +240,6 @@ static void webKitSettingsSetProperty(GObject* object, guint propId, const GValu
         webkit_settings_set_enable_frame_flattening(settings, g_value_get_boolean(value));
         break;
     case PROP_ENABLE_PLUGINS:
-        webkit_settings_set_enable_plugins(settings, g_value_get_boolean(value));
         break;
     case PROP_ENABLE_JAVA:
         webkit_settings_set_enable_java(settings, g_value_get_boolean(value));
@@ -286,7 +286,8 @@ static void webKitSettingsSetProperty(GObject* object, guint propId, const GValu
 #if PLATFORM(GTK)
     case PROP_ENABLE_PRIVATE_BROWSING:
         G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
-        webkit_settings_set_enable_private_browsing(settings, g_value_get_boolean(value));
+        if (g_value_get_boolean(value))
+            webkit_settings_set_enable_private_browsing(settings, TRUE);
         G_GNUC_END_IGNORE_DEPRECATIONS;
         break;
 #endif
@@ -383,6 +384,9 @@ static void webKitSettingsSetProperty(GObject* object, guint propId, const GValu
     case PROP_ALLOW_UNIVERSAL_ACCESS_FROM_FILE_URLS:
         webkit_settings_set_allow_universal_access_from_file_urls(settings, g_value_get_boolean(value));
         break;
+    case PROP_ALLOW_TOP_NAVIGATION_TO_DATA_URLS:
+        webkit_settings_set_allow_top_navigation_to_data_urls(settings, g_value_get_boolean(value));
+        break;
 #if PLATFORM(GTK)
     case PROP_HARDWARE_ACCELERATION_POLICY:
         webkit_settings_set_hardware_acceleration_policy(settings, static_cast<WebKitHardwareAccelerationPolicy>(g_value_get_enum(value)));
@@ -396,6 +400,9 @@ static void webKitSettingsSetProperty(GObject* object, guint propId, const GValu
         break;
     case PROP_ENABLE_MEDIA:
         webkit_settings_set_enable_media(settings, g_value_get_boolean(value));
+        break;
+    case PROP_MEDIA_CONTENT_TYPES_REQUIRING_HARDWARE_SUPPORT:
+        webkit_settings_set_media_content_types_requiring_hardware_support(settings, g_value_get_string(value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -433,7 +440,7 @@ static void webKitSettingsGetProperty(GObject* object, guint propId, GValue* val
         g_value_set_boolean(value, webkit_settings_get_enable_frame_flattening(settings));
         break;
     case PROP_ENABLE_PLUGINS:
-        g_value_set_boolean(value, webkit_settings_get_enable_plugins(settings));
+        g_value_set_boolean(value, FALSE);
         break;
     case PROP_ENABLE_JAVA:
         g_value_set_boolean(value, webkit_settings_get_enable_java(settings));
@@ -571,6 +578,9 @@ static void webKitSettingsGetProperty(GObject* object, guint propId, GValue* val
     case PROP_ALLOW_UNIVERSAL_ACCESS_FROM_FILE_URLS:
         g_value_set_boolean(value, webkit_settings_get_allow_universal_access_from_file_urls(settings));
         break;
+    case PROP_ALLOW_TOP_NAVIGATION_TO_DATA_URLS:
+        g_value_set_boolean(value, webkit_settings_get_allow_top_navigation_to_data_urls(settings));
+        break;
 #if PLATFORM(GTK)
     case PROP_HARDWARE_ACCELERATION_POLICY:
         g_value_set_enum(value, webkit_settings_get_hardware_acceleration_policy(settings));
@@ -584,6 +594,9 @@ static void webKitSettingsGetProperty(GObject* object, guint propId, GValue* val
         break;
     case PROP_ENABLE_MEDIA:
         g_value_set_boolean(value, webkit_settings_get_enable_media(settings));
+        break;
+    case PROP_MEDIA_CONTENT_TYPES_REQUIRING_HARDWARE_SUPPORT:
+        g_value_set_string(value, webkit_settings_get_media_content_types_requiring_hardware_support(settings));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -725,13 +738,15 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * WebKitSettings:enable-plugins:
      *
      * Determines whether or not plugins on the page are enabled.
+     *
+     * Deprecated: 2.32
      */
     g_object_class_install_property(gObjectClass,
                                     PROP_ENABLE_PLUGINS,
                                     g_param_spec_boolean("enable-plugins",
                                                          _("Enable plugins"),
                                                          _("Enable embedded plugin objects."),
-                                                         TRUE,
+                                                         FALSE,
                                                          readWriteConstructParamFlags));
 
     /**
@@ -940,7 +955,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
                                                          _("Enable private browsing"),
                                                          _("Whether to enable private browsing"),
                                                          FALSE,
-                                                         readWriteConstructParamFlags));
+                                                         static_cast<GParamFlags>(readWriteConstructParamFlags | G_PARAM_DEPRECATED)));
 #endif
 
     /**
@@ -1046,34 +1061,35 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      *
      *
      * Enable or disable support for WebAudio on pages. WebAudio is an
-     * experimental proposal for allowing web pages to generate Audio
-     * WAVE data from JavaScript. The standard is currently a
-     * work-in-progress by the W3C Audio Working Group.
+     * API for processing and synthesizing audio in web applications
      *
-     * See also https://dvcs.w3.org/hg/audio/raw-file/tip/webaudio/specification.html
+     * See also https://webaudio.github.io/web-audio-api
      */
-    g_object_class_install_property(gObjectClass,
-                                    PROP_ENABLE_WEBAUDIO,
-                                    g_param_spec_boolean("enable-webaudio",
-                                                         _("Enable WebAudio"),
-                                                         _("Whether WebAudio content should be handled"),
-                                                         FALSE,
-                                                         readWriteConstructParamFlags));
+    g_object_class_install_property(
+        gObjectClass,
+        PROP_ENABLE_WEBAUDIO,
+        g_param_spec_boolean(
+            "enable-webaudio",
+            _("Enable WebAudio"),
+            _("Whether WebAudio content should be handled"),
+            TRUE,
+            readWriteConstructParamFlags));
 
     /**
     * WebKitSettings:enable-webgl:
     *
-    * Enable or disable support for WebGL on pages. WebGL is an experimental
-    * proposal for allowing web pages to use OpenGL ES-like calls directly. The
-    * standard is currently a work-in-progress by the Khronos Group.
+    * Enable or disable support for WebGL on pages. WebGL enables web
+    * content to use an API based on OpenGL ES 2.0.
     */
-    g_object_class_install_property(gObjectClass,
-                                    PROP_ENABLE_WEBGL,
-                                    g_param_spec_boolean("enable-webgl",
-                                                         _("Enable WebGL"),
-                                                         _("Whether WebGL content should be rendered"),
-                                                         FALSE,
-                                                         readWriteConstructParamFlags));
+    g_object_class_install_property(
+        gObjectClass,
+        PROP_ENABLE_WEBGL,
+        g_param_spec_boolean(
+            "enable-webgl",
+            _("Enable WebGL"),
+            _("Whether WebGL content should be rendered"),
+            TRUE,
+            readWriteConstructParamFlags));
 
     /**
      * WebKitSettings:allow-modal-dialogs:
@@ -1436,14 +1452,32 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
             FALSE,
             readWriteConstructParamFlags));
 
+    /**
+     * WebKitSettings:allow-top-navigation-to-data-urls:
+     *
+     * Whether or not the top frame is allowed to navigate to data URLs. It is disabled by default
+     * due to the risk it poses when loading untrusted URLs, with data URLs being used in scamming
+     * and phishing attacks. In contrast, a scenario where it could be enabled could be an app that
+     * embeds a WebView and you have control of the pages being show instead of a generic browser.
+     *
+     * Since: 2.28
+     */
+    g_object_class_install_property(gObjectClass,
+        PROP_ALLOW_TOP_NAVIGATION_TO_DATA_URLS,
+        g_param_spec_boolean("allow-top-navigation-to-data-urls",
+            _("Allow top frame navigation to data URLs"),
+            _("Whether or not top frame navigation is allowed to data URLs"),
+            FALSE,
+            readWriteConstructParamFlags));
+
 #if PLATFORM(GTK)
     /**
      * WebKitSettings:hardware-acceleration-policy:
      *
      * The #WebKitHardwareAccelerationPolicy to decide how to enable and disable
      * hardware acceleration. The default value %WEBKIT_HARDWARE_ACCELERATION_POLICY_ON_DEMAND
-     * enables the hardware acceleration when the web contents request it, disabling it again
-     * when no longer needed. It's possible to enforce hardware acceleration to be always enabled
+     * enables the hardware acceleration when the web contents request it.
+     * It's possible to enforce hardware acceleration to be always enabled
      * by using %WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS. And it's also possible to disable it
      * completely using %WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER. Note that disabling hardware
      * acceleration might cause some websites to not render correctly or consume more CPU.
@@ -1513,6 +1547,21 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
             TRUE,
             readWriteConstructParamFlags));
 
+    /**
+     * WebKitSettings:media-content-types-requiring-hardware-support:
+     *
+     * List of media content types requiring hardware support, split by semicolons (:).
+     * For example: 'video/webm; codecs="vp*":video/mp4; codecs="avc*":video/&ast; codecs="av1*"'.
+     *
+     * Since: 2.30
+     */
+    g_object_class_install_property(gObjectClass,
+        PROP_MEDIA_CONTENT_TYPES_REQUIRING_HARDWARE_SUPPORT,
+        g_param_spec_string("media-content-types-requiring-hardware-support",
+            _("Media content types requiring hardware support"),
+            _("List of media content types requiring hardware support."),
+            nullptr, // A null string forces the default value.
+            readWriteConstructParamFlags));
 }
 
 WebPreferences* webkitSettingsGetPreferences(WebKitSettings* settings)
@@ -1841,12 +1890,16 @@ void webkit_settings_set_enable_frame_flattening(WebKitSettings* settings, gbool
  * Get the #WebKitSettings:enable-plugins property.
  *
  * Returns: %TRUE If plugins are enabled or %FALSE otherwise.
+ *
+ * Deprecated: 2.32
  */
 gboolean webkit_settings_get_enable_plugins(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    return settings->priv->preferences->pluginsEnabled();
+    g_warning("webkit_settings_get_enable_plugins is deprecated and always returns FALSE. Plugins are no longer supported.");
+
+    return FALSE;
 }
 
 /**
@@ -1855,18 +1908,14 @@ gboolean webkit_settings_get_enable_plugins(WebKitSettings* settings)
  * @enabled: Value to be set
  *
  * Set the #WebKitSettings:enable-plugins property.
+ *
+ * Deprecated: 2.32
  */
-void webkit_settings_set_enable_plugins(WebKitSettings* settings, gboolean enabled)
+void webkit_settings_set_enable_plugins(WebKitSettings* settings, gboolean)
 {
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
-    WebKitSettingsPrivate* priv = settings->priv;
-    bool currentValue = priv->preferences->pluginsEnabled();
-    if (currentValue == enabled)
-        return;
-
-    priv->preferences->setPluginsEnabled(enabled);
-    g_object_notify(G_OBJECT(settings), "enable-plugins");
+    g_warning("webkit_settings_set_enable_plugins is deprecated and does nothing. Plugins are no longer supported.");
 }
 
 /**
@@ -2390,7 +2439,7 @@ gboolean webkit_settings_get_enable_private_browsing(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    return settings->priv->preferences->privateBrowsingEnabled();
+    return FALSE;
 }
 
 /**
@@ -2406,13 +2455,7 @@ void webkit_settings_set_enable_private_browsing(WebKitSettings* settings, gbool
 {
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
-    WebKitSettingsPrivate* priv = settings->priv;
-    bool currentValue = priv->preferences->privateBrowsingEnabled();
-    if (currentValue == enabled)
-        return;
-
-    priv->preferences->setPrivateBrowsingEnabled(enabled);
-    g_object_notify(G_OBJECT(settings), "enable-private-browsing");
+    g_warning("webkit_settings_set_enable_private_browsing is deprecated and does nothing, use #WebKitWebView:is-ephemeral or #WebKitWebContext:is-ephemeral instead");
 }
 #endif
 
@@ -2991,7 +3034,7 @@ gboolean webkit_settings_get_enable_page_cache(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    return settings->priv->preferences->usesPageCache();
+    return settings->priv->preferences->usesBackForwardCache();
 }
 
 /**
@@ -3006,11 +3049,11 @@ void webkit_settings_set_enable_page_cache(WebKitSettings* settings, gboolean en
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     WebKitSettingsPrivate* priv = settings->priv;
-    bool currentValue = priv->preferences->usesPageCache();
+    bool currentValue = priv->preferences->usesBackForwardCache();
     if (currentValue == enabled)
         return;
 
-    priv->preferences->setUsesPageCache(enabled);
+    priv->preferences->setUsesBackForwardCache(enabled);
     g_object_notify(G_OBJECT(settings), "enable-page-cache");
 }
 
@@ -3043,7 +3086,15 @@ void webkit_settings_set_user_agent(WebKitSettings* settings, const char* userAg
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     WebKitSettingsPrivate* priv = settings->priv;
-    CString newUserAgent = (!userAgent || !strlen(userAgent)) ? WebCore::standardUserAgent("").utf8() : userAgent;
+
+    String userAgentString;
+    if (userAgent && *userAgent) {
+        userAgentString = String::fromUTF8(userAgent);
+        g_return_if_fail(WebCore::isValidUserAgentHeaderValue(userAgentString));
+    } else
+        userAgentString = WebCore::standardUserAgent("");
+
+    CString newUserAgent = userAgentString.utf8();
     if (newUserAgent == priv->userAgent)
         return;
 
@@ -3498,6 +3549,45 @@ void webkit_settings_set_allow_universal_access_from_file_urls(WebKitSettings* s
     g_object_notify(G_OBJECT(settings), "allow-universal-access-from-file-urls");
 }
 
+/**
+ * webkit_settings_get_allow_top_navigation_to_data_urls:
+ * @settings: a #WebKitSettings
+ *
+ * Get the #WebKitSettings:allow-top-navigation-to-data-urls property.
+ *
+ * Returns: %TRUE If navigation to data URLs from the top frame is allowed or %FALSE\
+ * otherwise.
+ *
+ * Since: 2.28
+ */
+gboolean webkit_settings_get_allow_top_navigation_to_data_urls(WebKitSettings* settings)
+{
+    g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
+
+    return settings->priv->preferences->allowTopNavigationToDataURLs();
+}
+
+/**
+ * webkit_settings_set_allow_top_navigation_to_data_urls:
+ * @settings: a #WebKitSettings
+ * @allowed: Value to be set
+ *
+ * Set the #WebKitSettings:allow-top-navigation-to-data-urls property.
+ *
+ * Since: 2.28
+ */
+void webkit_settings_set_allow_top_navigation_to_data_urls(WebKitSettings* settings, gboolean allowed)
+{
+    g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
+
+    WebKitSettingsPrivate* priv = settings->priv;
+    if (priv->preferences->allowTopNavigationToDataURLs() == allowed)
+        return;
+
+    priv->preferences->setAllowTopNavigationToDataURLs(allowed);
+    g_object_notify(G_OBJECT(settings), "allow-top-navigation-to-data-urls");
+}
+
 #if PLATFORM(GTK)
 /**
  * webkit_settings_get_hardware_acceleration_policy:
@@ -3548,6 +3638,7 @@ void webkit_settings_set_hardware_acceleration_policy(WebKitSettings* settings, 
         }
         if (!priv->preferences->forceCompositingMode()) {
             priv->preferences->setForceCompositingMode(true);
+            priv->preferences->setThreadedScrollingEnabled(true);
             changed = true;
         }
         break;
@@ -3561,6 +3652,7 @@ void webkit_settings_set_hardware_acceleration_policy(WebKitSettings* settings, 
 
         if (priv->preferences->forceCompositingMode()) {
             priv->preferences->setForceCompositingMode(false);
+            priv->preferences->setThreadedScrollingEnabled(false);
             changed = true;
         }
         break;
@@ -3572,6 +3664,7 @@ void webkit_settings_set_hardware_acceleration_policy(WebKitSettings* settings, 
 
         if (priv->preferences->forceCompositingMode() && !HardwareAccelerationManager::singleton().forceHardwareAcceleration()) {
             priv->preferences->setForceCompositingMode(false);
+            priv->preferences->setThreadedScrollingEnabled(false);
             changed = true;
         }
         break;
@@ -3732,4 +3825,53 @@ void webkit_settings_set_enable_media(WebKitSettings* settings, gboolean enabled
 
     priv->preferences->setMediaEnabled(enabled);
     g_object_notify(G_OBJECT(settings), "enable-media");
+}
+
+void webkitSettingsSetMediaCaptureRequiresSecureConnection(WebKitSettings* settings, bool required)
+{
+    WebKitSettingsPrivate* priv = settings->priv;
+    priv->preferences->setMediaCaptureRequiresSecureConnection(required);
+}
+
+/**
+ * webkit_settings_get_media_content_types_requiring_hardware_support:
+ * @settings: a #WebKitSettings
+ *
+ * Gets the #WebKitSettings:media-content-types-requiring-hardware-support property.
+ *
+ * Returns: Media content types requiring hardware support, or %NULL.
+ *
+ * Since: 2.30
+ */
+const gchar* webkit_settings_get_media_content_types_requiring_hardware_support(WebKitSettings* settings)
+{
+    g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
+
+    const auto& mediaContentTypesRequiringHardwareSupport = settings->priv->mediaContentTypesRequiringHardwareSupport;
+    if (!mediaContentTypesRequiringHardwareSupport.length())
+        return nullptr;
+    return mediaContentTypesRequiringHardwareSupport.data();
+}
+
+/**
+ * webkit_settings_set_media_content_types_requiring_hardware_support:
+ * @settings: a #WebKitSettings
+ * @content_types: (allow-none): list of media content types requiring hardware support split by semicolons (:) or %NULL to use the default value.
+ *
+ * Set the #WebKitSettings:media-content-types-requiring-hardware-support property.
+ *
+ * Since: 2.30
+ */
+void webkit_settings_set_media_content_types_requiring_hardware_support(WebKitSettings* settings, const gchar* mediaContentTypesRequiringHardwareSupport)
+{
+    g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
+
+    WebKitSettingsPrivate* priv = settings->priv;
+    if (!g_strcmp0(priv->mediaContentTypesRequiringHardwareSupport.data(), mediaContentTypesRequiringHardwareSupport))
+        return;
+
+    String mediaContentTypesRequiringHardwareSupportString = String::fromUTF8(mediaContentTypesRequiringHardwareSupport);
+    priv->preferences->setMediaContentTypesRequiringHardwareSupport(mediaContentTypesRequiringHardwareSupportString);
+    priv->mediaContentTypesRequiringHardwareSupport = mediaContentTypesRequiringHardwareSupportString.utf8();
+    g_object_notify(G_OBJECT(settings), "media-content-types-requiring-hardware-support");
 }

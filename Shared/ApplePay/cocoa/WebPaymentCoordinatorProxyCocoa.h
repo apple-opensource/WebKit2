@@ -27,7 +27,9 @@
 
 #if ENABLE(APPLE_PAY)
 
-#import <pal/spi/cocoa/PassKitSPI.h>
+#import <WebCore/ApplePaySessionPaymentRequest.h>
+
+OBJC_CLASS PKShippingMethod;
 
 namespace WebKit {
 

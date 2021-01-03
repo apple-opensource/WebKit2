@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,12 @@
 #include <WebCore/AutocapitalizeTypes.h>
 #include <WebCore/Autofill.h>
 #include <WebCore/Color.h>
+#include <WebCore/ElementContext.h>
+#include <WebCore/EnterKeyHint.h>
 #include <WebCore/GraphicsLayer.h>
 #include <WebCore/InputMode.h>
 #include <WebCore/IntRect.h>
+#include <wtf/EnumTraits.h>
 #include <wtf/URL.h>
 #include <wtf/text/WTFString.h>
 
@@ -50,7 +53,6 @@ enum class InputType {
     Number,
     NumberPad,
     Date,
-    DateTime,
     DateTimeLocal,
     Month,
     Week,
@@ -96,7 +98,8 @@ struct OptionItem {
 using FocusedElementIdentifier = uint64_t;
 
 struct FocusedElementInformation {
-    WebCore::IntRect elementRect;
+    WebCore::IntRect interactionRect;
+    WebCore::ElementContext elementContext;
     WebCore::IntPoint lastInteractionLocation;
     double minimumScaleFactor { -INFINITY };
     double maximumScaleFactor { INFINITY };
@@ -113,9 +116,10 @@ struct FocusedElementInformation {
     bool allowsUserScaling { false };
     bool allowsUserScalingIgnoringAlwaysScalable { false };
     bool insideFixedPosition { false };
-    AutocapitalizeType autocapitalizeType { AutocapitalizeTypeDefault };
+    WebCore::AutocapitalizeType autocapitalizeType { WebCore::AutocapitalizeType::Default };
     InputType elementType { InputType::None };
     WebCore::InputMode inputMode { WebCore::InputMode::Unspecified };
+    WebCore::EnterKeyHint enterKeyHint { WebCore::EnterKeyHint::Unspecified };
     String formAction;
     Vector<OptionItem> selectOptions;
     int selectedIndex { -1 };
@@ -145,8 +149,39 @@ struct FocusedElementInformation {
     FocusedElementIdentifier focusedElementIdentifier { 0 };
 
     void encode(IPC::Encoder&) const;
-    static bool decode(IPC::Decoder&, FocusedElementInformation&);
+    static WARN_UNUSED_RETURN bool decode(IPC::Decoder&, FocusedElementInformation&);
 };
 #endif
 
-}
+} // namespace WebKit
+
+namespace WTF {
+
+template<> struct EnumTraits<WebKit::InputType> {
+    using values = EnumValues<
+        WebKit::InputType,
+        WebKit::InputType::None,
+        WebKit::InputType::ContentEditable,
+        WebKit::InputType::Text,
+        WebKit::InputType::Password,
+        WebKit::InputType::TextArea,
+        WebKit::InputType::Search,
+        WebKit::InputType::Email,
+        WebKit::InputType::URL,
+        WebKit::InputType::Phone,
+        WebKit::InputType::Number,
+        WebKit::InputType::NumberPad,
+        WebKit::InputType::Date,
+        WebKit::InputType::DateTimeLocal,
+        WebKit::InputType::Month,
+        WebKit::InputType::Week,
+        WebKit::InputType::Time,
+        WebKit::InputType::Select,
+        WebKit::InputType::Drawing
+#if ENABLE(INPUT_TYPE_COLOR)
+        , WebKit::InputType::Color
+#endif
+    >;
+};
+
+} // namespace WTF

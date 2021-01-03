@@ -63,7 +63,8 @@ Optional<OptionItem> OptionItem::decode(IPC::Decoder& decoder)
 
 void FocusedElementInformation::encode(IPC::Encoder& encoder) const
 {
-    encoder << elementRect;
+    encoder << interactionRect;
+    encoder << elementContext;
     encoder << lastInteractionLocation;
     encoder << minimumScaleFactor;
     encoder << maximumScaleFactor;
@@ -75,9 +76,10 @@ void FocusedElementInformation::encode(IPC::Encoder& encoder) const
     encoder << previousNodeRect;
     encoder << isAutocorrect;
     encoder << isRTL;
-    encoder.encodeEnum(autocapitalizeType);
-    encoder.encodeEnum(elementType);
-    encoder.encodeEnum(inputMode);
+    encoder << autocapitalizeType;
+    encoder << elementType;
+    encoder << inputMode;
+    encoder << enterKeyHint;
     encoder << formAction;
     encoder << selectOptions;
     encoder << selectedIndex;
@@ -92,7 +94,7 @@ void FocusedElementInformation::encode(IPC::Encoder& encoder) const
     encoder << acceptsAutofilledLoginCredentials;
     encoder << isAutofillableUsernameField;
     encoder << representingPageURL;
-    encoder.encodeEnum(autofillFieldName);
+    encoder << autofillFieldName;
     encoder << placeholder;
     encoder << label;
     encoder << ariaLabel;
@@ -113,7 +115,10 @@ void FocusedElementInformation::encode(IPC::Encoder& encoder) const
 
 bool FocusedElementInformation::decode(IPC::Decoder& decoder, FocusedElementInformation& result)
 {
-    if (!decoder.decode(result.elementRect))
+    if (!decoder.decode(result.interactionRect))
+        return false;
+
+    if (!decoder.decode(result.elementContext))
         return false;
 
     if (!decoder.decode(result.lastInteractionLocation))
@@ -149,13 +154,16 @@ bool FocusedElementInformation::decode(IPC::Decoder& decoder, FocusedElementInfo
     if (!decoder.decode(result.isRTL))
         return false;
 
-    if (!decoder.decodeEnum(result.autocapitalizeType))
+    if (!decoder.decode(result.autocapitalizeType))
         return false;
 
-    if (!decoder.decodeEnum(result.elementType))
+    if (!decoder.decode(result.elementType))
         return false;
 
-    if (!decoder.decodeEnum(result.inputMode))
+    if (!decoder.decode(result.inputMode))
+        return false;
+
+    if (!decoder.decode(result.enterKeyHint))
         return false;
 
     if (!decoder.decode(result.formAction))
@@ -200,7 +208,7 @@ bool FocusedElementInformation::decode(IPC::Decoder& decoder, FocusedElementInfo
     if (!decoder.decode(result.representingPageURL))
         return false;
 
-    if (!decoder.decodeEnum(result.autofillFieldName))
+    if (!decoder.decode(result.autofillFieldName))
         return false;
 
     if (!decoder.decode(result.placeholder))

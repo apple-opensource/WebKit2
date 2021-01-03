@@ -50,13 +50,14 @@
 namespace WebKit {
 using namespace WebCore;
 
-Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NetworkDataTask& download, const PAL::SessionID& sessionID, const String& suggestedName)
+Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NetworkDataTask& download, NetworkSession& session, const String& suggestedName)
     : m_downloadManager(downloadManager)
     , m_downloadID(downloadID)
     , m_client(downloadManager.client())
     , m_download(&download)
-    , m_sessionID(sessionID)
+    , m_sessionID(session.sessionID())
     , m_suggestedName(suggestedName)
+    , m_testSpeedMultiplier(session.testSpeedMultiplier())
 {
     ASSERT(m_downloadID.downloadID());
 
@@ -64,13 +65,14 @@ Download::Download(DownloadManager& downloadManager, DownloadID downloadID, Netw
 }
 
 #if PLATFORM(COCOA)
-Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NSURLSessionDownloadTask* download, const PAL::SessionID& sessionID, const String& suggestedName)
+Download::Download(DownloadManager& downloadManager, DownloadID downloadID, NSURLSessionDownloadTask* download, NetworkSession& session, const String& suggestedName)
     : m_downloadManager(downloadManager)
     , m_downloadID(downloadID)
     , m_client(downloadManager.client())
     , m_downloadTask(download)
-    , m_sessionID(sessionID)
+    , m_sessionID(session.sessionID())
     , m_suggestedName(suggestedName)
+    , m_testSpeedMultiplier(session.testSpeedMultiplier())
 {
     ASSERT(m_downloadID.downloadID());
 
@@ -115,16 +117,16 @@ void Download::didCreateDestination(const String& path)
     send(Messages::DownloadProxy::DidCreateDestination(path));
 }
 
-void Download::didReceiveData(uint64_t length)
+void Download::didReceiveData(uint64_t bytesWritten, uint64_t totalBytesWritten, uint64_t totalBytesExpectedToWrite)
 {
     if (!m_hasReceivedData) {
         RELEASE_LOG_IF_ALLOWED("didReceiveData: Started receiving data (id = %" PRIu64 ")", downloadID().downloadID());
         m_hasReceivedData = true;
     }
     
-    m_monitor.downloadReceivedBytes(length);
+    m_monitor.downloadReceivedBytes(bytesWritten);
 
-    send(Messages::DownloadProxy::DidReceiveData(length));
+    send(Messages::DownloadProxy::DidReceiveData(bytesWritten, totalBytesWritten, totalBytesExpectedToWrite));
 }
 
 void Download::didFinish()

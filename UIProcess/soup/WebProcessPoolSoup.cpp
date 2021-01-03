@@ -26,7 +26,6 @@
 #include "config.h"
 #include "WebProcessPool.h"
 
-#include "APICustomProtocolManagerClient.h"
 #include "NetworkProcessCreationParameters.h"
 #include "NetworkProcessMessages.h"
 #include "WebCookieManagerProxy.h"
@@ -40,11 +39,14 @@ void WebProcessPool::platformInitializeNetworkProcess(NetworkProcessCreationPara
 {
     NetworkSessionCreationParameters& defaultSessionParameters = parameters.defaultDataStoreParameters.networkSessionParameters;
     supplement<WebCookieManagerProxy>()->getCookiePersistentStorage(defaultSessionParameters.sessionID, defaultSessionParameters.cookiePersistentStoragePath, defaultSessionParameters.cookiePersistentStorageType);
+    if (m_websiteDataStore)
+        defaultSessionParameters.persistentCredentialStorageEnabled = m_websiteDataStore->persistentCredentialStorageEnabled();
 
     parameters.cookieAcceptPolicy = m_initialHTTPCookieAcceptPolicy;
     parameters.ignoreTLSErrors = m_ignoreTLSErrors;
     parameters.languages = userPreferredLanguages();
     parameters.proxySettings = m_networkProxySettings;
+    parameters.shouldEnableITPDatabase = true;
 }
 
 void WebProcessPool::setIgnoreTLSErrors(bool ignoreTLSErrors)

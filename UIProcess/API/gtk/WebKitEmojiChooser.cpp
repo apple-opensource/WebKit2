@@ -25,7 +25,7 @@
 #include "config.h"
 #include "WebKitEmojiChooser.h"
 
-#if GTK_CHECK_VERSION(3, 24, 0)
+#if GTK_CHECK_VERSION(3, 24, 0) && !USE(GTK4)
 
 #include <glib/gi18n-lib.h>
 #include <wtf/HashSet.h>
@@ -194,6 +194,8 @@ static void webkitEmojiChooserAddRecentItem(WebKitEmojiChooser* chooser, GVarian
 
 static void emojiActivated(GtkFlowBox* box, GtkFlowBoxChild* child, WebKitEmojiChooser* chooser)
 {
+    gtk_popover_popdown(GTK_POPOVER(chooser));
+
     GtkWidget* label = gtk_bin_get_child(GTK_BIN(gtk_bin_get_child(GTK_BIN(child))));
     GUniquePtr<char> text(g_strdup(gtk_label_get_label(GTK_LABEL(label))));
 
@@ -201,8 +203,6 @@ static void emojiActivated(GtkFlowBox* box, GtkFlowBoxChild* child, WebKitEmojiC
     auto modifier = static_cast<gunichar>(GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(child), "modifier")));
     webkitEmojiChooserAddRecentItem(chooser, item, modifier);
     g_signal_emit(chooser, signals[EMOJI_PICKED], 0, text.get());
-
-    gtk_popover_popdown(GTK_POPOVER(chooser));
 }
 
 static bool emojiDataHasVariations(GVariant* emojiData)
@@ -480,7 +480,7 @@ static void webkitEmojiChooserSetupEmojiSections(WebKitEmojiChooser* chooser, Gt
         { "grapes", N_("Food & Drink"), "emoji-food-symbolic", false },
         { "globe showing Europe-Africa", N_("Travel & Places"), "emoji-travel-symbolic", false },
         { "jack-o-lantern", N_("Activities"), "emoji-activities-symbolic", false },
-        { "uted speaker", _("Objects"), "emoji-objects-symbolic", false },
+        { "muted speaker", _("Objects"), "emoji-objects-symbolic", false },
         { "ATM sign", N_("Symbols"), "emoji-symbols-symbolic", false },
         { "chequered flag", _("Flags"), "emoji-flags-symbolic", false }
     };
@@ -519,7 +519,7 @@ static void webkitEmojiChooserSetupEmojiSections(WebKitEmojiChooser* chooser, Gt
         chooser->priv->populateSectionsTimer = nullptr;
     };
 
-    chooser->priv->populateSectionsTimer = std::make_unique<CallbackTimer>(WTFMove(populateSections));
+    chooser->priv->populateSectionsTimer = makeUnique<CallbackTimer>(WTFMove(populateSections));
     chooser->priv->populateSectionsTimer->setPriority(G_PRIORITY_DEFAULT_IDLE);
     chooser->priv->populateSectionsTimer->setName("[WebKitEmojiChooser] populate sections timer");
     chooser->priv->populateSectionsTimer->startRepeating({ });
@@ -637,4 +637,4 @@ GtkWidget* webkitEmojiChooserNew()
     return GTK_WIDGET(authDialog);
 }
 
-#endif // GTK_CHECK_VERSION(3, 24, 0)
+#endif // GTK_CHECK_VERSION(3, 24, 0) && !USE(GTK4)

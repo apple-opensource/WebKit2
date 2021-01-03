@@ -29,7 +29,7 @@
 
 #include "Connection.h"
 #include "Plugin.h"
-#include "WebProcessConnectionMessages.h"
+#include "WebProcessConnectionMessagesReplies.h"
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 
@@ -64,14 +64,14 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, std::unique_ptr<IPC::Encoder>&) override;
     void didClose(IPC::Connection&) override;
-    void didReceiveInvalidMessage(IPC::Connection&, IPC::StringReference messageReceiverName, IPC::StringReference messageName) override;
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName) override;
 
     // Message handlers.
     void didReceiveWebProcessConnectionMessage(IPC::Connection&, IPC::Decoder&);
     void didReceiveSyncWebProcessConnectionMessage(IPC::Connection&, IPC::Decoder&, std::unique_ptr<IPC::Encoder>&);
-    void createPlugin(const PluginCreationParameters&, Messages::WebProcessConnection::CreatePlugin::DelayedReply&&);
+    void createPlugin(const PluginCreationParameters&, Messages::WebProcessConnection::CreatePluginDelayedReply&&);
     void createPluginAsynchronously(const PluginCreationParameters&);
-    void destroyPlugin(uint64_t pluginInstanceID, bool asynchronousCreationIncomplete, Messages::WebProcessConnection::DestroyPlugin::DelayedReply&&);
+    void destroyPlugin(uint64_t pluginInstanceID, bool asynchronousCreationIncomplete, Messages::WebProcessConnection::DestroyPluginDelayedReply&&);
     
     void createPluginInternal(const PluginCreationParameters&, bool& result, bool& wantsWheelEvents, uint32_t& remoteLayerClientID);
 

@@ -33,7 +33,9 @@
 #include "PluginProcess.h"
 #include "PluginProcessAttributes.h"
 #include "ProcessLauncher.h"
-#include "WebProcessProxyMessages.h"
+#include "ProcessThrottler.h"
+#include "ProcessThrottlerClient.h"
+#include "WebProcessProxyMessagesReplies.h"
 #include <wtf/Deque.h>
 
 #if PLATFORM(COCOA)
@@ -61,7 +63,7 @@ int pluginProcessLatencyQOS();
 int pluginProcessThroughputQOS();
 #endif
 
-class PluginProcessProxy final : public AuxiliaryProcessProxy, public ThreadSafeRefCounted<PluginProcessProxy> {
+class PluginProcessProxy final : public AuxiliaryProcessProxy, public ThreadSafeRefCounted<PluginProcessProxy>, private ProcessThrottlerClient {
 public:
     static Ref<PluginProcessProxy> create(PluginProcessManager*, const PluginProcessAttributes&, uint64_t pluginProcessToken);
     ~PluginProcessProxy();
@@ -71,7 +73,7 @@ public:
 
     // Asks the plug-in process to create a new connection to a web process. The connection identifier will be
     // encoded in the given argument encoder and sent back to the connection of the given web process.
-    void getPluginProcessConnection(Messages::WebProcessProxy::GetPluginProcessConnection::DelayedReply&&);
+    void getPluginProcessConnection(Messages::WebProcessProxy::GetPluginProcessConnectionDelayedReply&&);
 
     void fetchWebsiteData(CompletionHandler<void (Vector<String>)>&&);
     void deleteWebsiteData(WallTime modifiedSince, CompletionHandler<void ()>&&);
@@ -87,8 +89,13 @@ public:
     static bool scanPlugin(const String& pluginPath, RawPluginMetaData& result);
 #endif
 
+    ProcessThrottler& throttler() final { return m_throttler; }
+
 private:
     PluginProcessProxy(PluginProcessManager*, const PluginProcessAttributes&, uint64_t pluginProcessToken);
+
+    // AuxiliaryProcessProxy
+    ASCIILiteral processName() const final { return "Plugin"_s; }
 
     void getLaunchOptions(ProcessLauncher::LaunchOptions&) override;
     void platformGetLaunchOptionsWithAttributes(ProcessLauncher::LaunchOptions&, const PluginProcessAttributes&);
@@ -96,12 +103,17 @@ private:
 
     void pluginProcessCrashedOrFailedToLaunch();
 
+    // ProcessThrottlerClient
+    void sendPrepareToSuspend(IsSuspensionImminent, CompletionHandler<void()>&& completionHandler) final { completionHandler(); }
+    void sendProcessDidResume() final { }
+    ASCIILiteral clientName() const final { return "PluginProcess"_s; }
+
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, std::unique_ptr<IPC::Encoder>&) override;
 
     void didClose(IPC::Connection&) override;
-    void didReceiveInvalidMessage(IPC::Connection&, IPC::StringReference messageReceiverName, IPC::StringReference messageName) override;
+    void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName) override;
 
     // ProcessLauncher::Client
     void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier) override;
@@ -134,6 +146,8 @@ private:
 
     void platformInitializePluginProcess(PluginProcessCreationParameters& parameters);
 
+    ProcessThrottler m_throttler;
+
     // The plug-in host process manager.
     PluginProcessManager* m_pluginProcessManager;
 
@@ -143,7 +157,7 @@ private:
     // The connection to the plug-in host process.
     RefPtr<IPC::Connection> m_connection;
 
-    Deque<Messages::WebProcessProxy::GetPluginProcessConnection::DelayedReply> m_pendingConnectionReplies;
+    Deque<Messages::WebProcessProxy::GetPluginProcessConnectionDelayedReply> m_pendingConnectionReplies;
 
     Vector<uint64_t> m_pendingFetchWebsiteDataRequests;
     HashMap<uint64_t, CompletionHandler<void (Vector<String>)>> m_pendingFetchWebsiteDataCallbacks;

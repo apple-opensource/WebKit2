@@ -25,6 +25,8 @@
 #include <WebCore/DOMException.h>
 #include <WebCore/Document.h>
 #include "GObjectEventListener.h"
+#include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/JSDOMPromiseDeferred.h>
 #include <WebCore/JSExecState.h>
 #include <WebCore/SerializedScriptValue.h>
 #include <WebCore/UserMessageHandlersNamespace.h>
@@ -660,7 +662,7 @@ gboolean webkit_dom_dom_window_confirm(WebKitDOMDOMWindow* self, const gchar* me
     g_return_val_if_fail(message, FALSE);
     WebCore::DOMWindow* item = WebKit::core(self);
     WTF::String convertedMessage = WTF::String::fromUTF8(message);
-    gboolean result = item->confirm(convertedMessage);
+    gboolean result = item->confirmForBindings(convertedMessage);
     return result;
 }
 
@@ -1069,8 +1071,17 @@ gboolean webkit_dom_dom_window_webkit_message_handlers_post_message(WebKitDOMDOM
     auto handler = webkitNamespace->messageHandlers()->namedItem(WebCore::mainThreadNormalWorld(), String::fromUTF8(handlerName));
     if (!handler)
         return FALSE;
+    
+    auto* scriptExecutionContext = ((WebCore::ContextDestructionObserver*)domWindow)->scriptExecutionContext();
+    if (!scriptExecutionContext)
+        return FALSE;
+    
+    auto* globalObject = toJSDOMGlobalObject(*scriptExecutionContext, WebCore::mainThreadNormalWorld());
+    if (!globalObject)
+        return FALSE;
 
-    auto result = handler->postMessage(WebCore::SerializedScriptValue::create(String::fromUTF8(message)));
+    auto promise = WebCore::DeferredPromise::create(*globalObject);
+    auto result = handler->postMessage(WebCore::SerializedScriptValue::create(String::fromUTF8(message)), adoptRef(*(promise.leakRef())));
     if (result.hasException())
         return FALSE;
 

@@ -39,6 +39,7 @@ class WebPageProxy;
 class AcceleratedBackingStoreX11 final : public AcceleratedBackingStore {
     WTF_MAKE_NONCOPYABLE(AcceleratedBackingStoreX11); WTF_MAKE_FAST_ALLOCATED;
 public:
+    static bool checkRequirements();
     static std::unique_ptr<AcceleratedBackingStoreX11> create(WebPageProxy&);
     ~AcceleratedBackingStoreX11();
 
@@ -46,7 +47,11 @@ private:
     explicit AcceleratedBackingStoreX11(WebPageProxy&);
 
     void update(const LayerTreeContext&) override;
+#if USE(GTK4)
+    void snapshot(GtkSnapshot*) override;
+#else
     bool paint(cairo_t*, const WebCore::IntRect&) override;
+#endif
 
     RefPtr<cairo_surface_t> m_surface;
     WebCore::XUniqueDamage m_damage;

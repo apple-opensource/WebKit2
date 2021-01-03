@@ -24,19 +24,32 @@
  */
 
 #import "config.h"
-#import "_WKInspector.h"
+#import "_WKInspectorInternal.h"
 
 #import "WKWebViewInternal.h"
+#import "WebPageProxy.h"
 #import "WebProcessProxy.h"
 #import "_WKFrameHandleInternal.h"
-#import "_WKInspectorInternal.h"
+#import <WebCore/FrameIdentifier.h>
+#import <wtf/HashMap.h>
+#import <wtf/HashSet.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/text/WTFString.h>
 
 @implementation _WKInspector
+
+// MARK: _WKInspector methods
 
 - (WKWebView *)webView
 {
     if (auto* page = _inspector->inspectedPage())
+        return fromWebPageProxy(*page);
+    return nil;
+}
+
+- (WKWebView *)inspectorWebView
+{
+    if (auto* page = _inspector->inspectorPage())
         return fromWebPageProxy(*page);
     return nil;
 }
@@ -99,7 +112,7 @@
 - (void)showMainResourceForFrame:(_WKFrameHandle *)frame
 {
     if (auto* page = _inspector->inspectedPage())
-        _inspector->showMainResourceForFrame(page->process().webFrame(frame._frameID));
+        _inspector->showMainResourceForFrame(page->process().webFrame(frame->_frameHandle->frameID()));
 }
 
 - (void)attach
@@ -110,11 +123,6 @@
 - (void)detach
 {
     _inspector->detach();
-}
-
-- (void)showTimelines
-{
-    _inspector->showTimelines();
 }
 
 - (void)togglePageProfiling
@@ -132,6 +140,39 @@
     // FIXME: This should use a new message source rdar://problem/34658378
     [self.webView evaluateJavaScript:[NSString stringWithFormat:@"console.error(\"%@\");", error] completionHandler:nil];
 }
+
+// MARK: _WKInspectorPrivate methods
+
+- (void)_setDiagnosticLoggingDelegate:(id<_WKDiagnosticLoggingDelegate>)delegate
+{
+    auto inspectorWebView = self.inspectorWebView;
+    if (!inspectorWebView)
+        return;
+
+    inspectorWebView._diagnosticLoggingDelegate = delegate;
+    _inspector->setDiagnosticLoggingAvailable(!!delegate);
+}
+
+- (void)_browserExtensionsEnabled:(NSDictionary<NSString *, NSString *> *)extensionIDToNameMap
+{
+    HashMap<String, String> transformed;
+    transformed.reserveInitialCapacity(extensionIDToNameMap.count);
+    [extensionIDToNameMap enumerateKeysAndObjectsUsingBlock:[&](NSString *extensionID, NSString *extensionName, BOOL *) {
+        transformed.set(extensionID, extensionName);
+    }];
+    _inspector->browserExtensionsEnabled(WTFMove(transformed));
+}
+
+- (void)_browserExtensionsDisabled:(NSSet<NSString *> *)extensionIDs
+{
+    HashSet<String> transformed;
+    transformed.reserveInitialCapacity(extensionIDs.count);
+    for (NSString *extensionID in extensionIDs)
+        transformed.addVoid(extensionID);
+    _inspector->browserExtensionsDisabled(WTFMove(transformed));
+}
+
+// MARK: _WKInspectorInternal methods
 
 - (API::Object&)_apiObject
 {

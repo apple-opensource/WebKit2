@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,6 +47,7 @@
 #include "WebsitePoliciesData.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/JSContextRef.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSValueRef.h>
 #include <WebCore/ArchiveResource.h>
@@ -54,6 +55,7 @@
 #include <WebCore/Chrome.h>
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/Editor.h>
+#include <WebCore/ElementChildIterator.h>
 #include <WebCore/EventHandler.h>
 #include <WebCore/File.h>
 #include <WebCore/Frame.h>
@@ -70,7 +72,6 @@
 #include <WebCore/JSElement.h>
 #include <WebCore/JSFile.h>
 #include <WebCore/JSRange.h>
-#include <WebCore/NodeTraversal.h>
 #include <WebCore/Page.h>
 #include <WebCore/PluginDocument.h>
 #include <WebCore/RenderTreeAsText.h>
@@ -95,35 +96,27 @@ using namespace WebCore;
 
 DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, webFrameCounter, ("WebFrame"));
 
-static uint64_t generateFrameID()
-{
-    static uint64_t uniqueFrameID = 1;
-    return uniqueFrameID++;
-}
-
 static uint64_t generateListenerID()
 {
     static uint64_t uniqueListenerID = 1;
     return uniqueListenerID++;
 }
 
-Ref<WebFrame> WebFrame::createWithCoreMainFrame(WebPage* page, WebCore::Frame* coreFrame)
+void WebFrame::initWithCoreMainFrame(WebPage& page, Frame& coreFrame)
 {
-    auto frame = create(std::unique_ptr<WebFrameLoaderClient>(static_cast<WebFrameLoaderClient*>(&coreFrame->loader().client())));
-    page->send(Messages::WebPageProxy::DidCreateMainFrame(frame->frameID()));
+    page.send(Messages::WebPageProxy::DidCreateMainFrame(frameID()));
 
-    frame->m_coreFrame = coreFrame;
-    frame->m_coreFrame->tree().setName(String());
-    frame->m_coreFrame->init();
-    return frame;
+    m_coreFrame = &coreFrame;
+    m_coreFrame->tree().setName(String());
+    m_coreFrame->init();
 }
 
 Ref<WebFrame> WebFrame::createSubframe(WebPage* page, const String& frameName, HTMLFrameOwnerElement* ownerElement)
 {
-    auto frame = create(std::make_unique<WebFrameLoaderClient>());
+    auto frame = create();
     page->send(Messages::WebPageProxy::DidCreateSubframe(frame->frameID()));
 
-    auto coreFrame = Frame::create(page->corePage(), ownerElement, frame->m_frameLoaderClient.get());
+    auto coreFrame = Frame::create(page->corePage(), ownerElement, makeUniqueRef<WebFrameLoaderClient>(frame.get()));
     frame->m_coreFrame = coreFrame.ptr();
 
     coreFrame->tree().setName(frameName);
@@ -136,26 +129,19 @@ Ref<WebFrame> WebFrame::createSubframe(WebPage* page, const String& frameName, H
     return frame;
 }
 
-Ref<WebFrame> WebFrame::create(std::unique_ptr<WebFrameLoaderClient> frameLoaderClient)
+WebFrame::WebFrame()
+    : m_frameID(FrameIdentifier::generate())
 {
-    auto frame = adoptRef(*new WebFrame(WTFMove(frameLoaderClient)));
-
-    // Add explict ref() that will be balanced in WebFrameLoaderClient::frameLoaderDestroyed().
-    frame->ref();
-
-    return frame;
-}
-
-WebFrame::WebFrame(std::unique_ptr<WebFrameLoaderClient> frameLoaderClient)
-    : m_frameLoaderClient(WTFMove(frameLoaderClient))
-    , m_frameID(generateFrameID())
-{
-    m_frameLoaderClient->setWebFrame(this);
     WebProcess::singleton().addWebFrame(m_frameID, this);
 
 #ifndef NDEBUG
     webFrameCounter.increment();
 #endif
+}
+
+WebFrameLoaderClient* WebFrame::frameLoaderClient() const
+{
+    return m_coreFrame ? static_cast<WebFrameLoaderClient*>(&m_coreFrame->loader().client()) : nullptr;
 }
 
 WebFrame::~WebFrame()
@@ -176,31 +162,34 @@ WebPage* WebFrame::page() const
     if (!m_coreFrame)
         return nullptr;
     
-    if (Page* page = m_coreFrame->page())
-        return WebPage::fromCorePage(page);
+    if (auto* page = m_coreFrame->page())
+        return &WebPage::fromCorePage(*page);
 
     return nullptr;
 }
 
-WebFrame* WebFrame::fromCoreFrame(Frame& frame)
+WebFrame* WebFrame::fromCoreFrame(const Frame& frame)
 {
     auto* webFrameLoaderClient = toWebFrameLoaderClient(frame.loader().client());
     if (!webFrameLoaderClient)
         return nullptr;
 
-    return webFrameLoaderClient->webFrame();
+    return &webFrameLoaderClient->webFrame();
 }
 
 FrameInfoData WebFrame::info() const
 {
-    FrameInfoData info;
+    auto* parent = parentFrame();
 
-    info.isMainFrame = isMainFrame();
-    // FIXME: This should use the full request.
-    info.request = ResourceRequest(URL(URL(), url()));
-    info.securityOrigin = SecurityOriginData::fromFrame(m_coreFrame);
-    info.frameID = m_frameID;
-    
+    FrameInfoData info {
+        isMainFrame(),
+        // FIXME: This should use the full request.
+        ResourceRequest(url()),
+        SecurityOriginData::fromFrame(m_coreFrame),
+        m_frameID,
+        parent ? Optional<WebCore::FrameIdentifier> { parent->frameID() } : WTF::nullopt,
+    };
+
     return info;
 }
 
@@ -257,12 +246,12 @@ void WebFrame::invalidatePolicyListener()
         completionHandler();
 }
 
-void WebFrame::didReceivePolicyDecision(uint64_t listenerID, WebCore::PolicyCheckIdentifier identifier, PolicyAction action, uint64_t navigationID, DownloadID downloadID, Optional<WebsitePoliciesData>&& websitePolicies)
+void WebFrame::didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&& policyDecision)
 {
     if (!m_coreFrame || !m_policyListenerID || listenerID != m_policyListenerID || !m_policyFunction)
         return;
 
-    ASSERT(identifier == m_policyIdentifier);
+    ASSERT(policyDecision.identifier == m_policyIdentifier);
     m_policyIdentifier = WTF::nullopt;
 
     FramePolicyFunction function = WTFMove(m_policyFunction);
@@ -270,16 +259,25 @@ void WebFrame::didReceivePolicyDecision(uint64_t listenerID, WebCore::PolicyChec
 
     invalidatePolicyListener();
 
-    if (forNavigationAction && m_frameLoaderClient && websitePolicies)
-        m_frameLoaderClient->applyToDocumentLoader(WTFMove(*websitePolicies));
-
-    m_policyDownloadID = downloadID;
-    if (navigationID) {
-        if (WebDocumentLoader* documentLoader = static_cast<WebDocumentLoader*>(m_coreFrame->loader().policyDocumentLoader()))
-            documentLoader->setNavigationID(navigationID);
+    if (forNavigationAction && frameLoaderClient() && policyDecision.websitePoliciesData) {
+        ASSERT(page());
+        if (page())
+            page()->setAllowsContentJavaScriptFromMostRecentNavigation(policyDecision.websitePoliciesData->allowsContentJavaScript);
+        frameLoaderClient()->applyToDocumentLoader(WTFMove(*policyDecision.websitePoliciesData));
     }
 
-    function(action, identifier);
+    m_policyDownloadID = policyDecision.downloadID;
+    if (policyDecision.navigationID) {
+        if (WebDocumentLoader* documentLoader = static_cast<WebDocumentLoader*>(m_coreFrame->loader().policyDocumentLoader()))
+            documentLoader->setNavigationID(policyDecision.navigationID);
+    }
+
+    if (policyDecision.policyAction == PolicyAction::Use && policyDecision.sandboxExtensionHandle) {
+        if (auto* page = this->page())
+            page->sandboxExtensionTracker().beginLoad(&page->mainWebFrame(), WTFMove(*(policyDecision.sandboxExtensionHandle)));
+    }
+
+    function(policyDecision.policyAction, policyDecision.identifier);
 }
 
 void WebFrame::startDownload(const WebCore::ResourceRequest& request, const String& suggestedName)
@@ -289,12 +287,12 @@ void WebFrame::startDownload(const WebCore::ResourceRequest& request, const Stri
     auto policyDownloadID = m_policyDownloadID;
     m_policyDownloadID = { };
 
-    auto& webProcess = WebProcess::singleton();
-    PAL::SessionID sessionID = page() ? page()->sessionID() : PAL::SessionID::defaultSessionID();
-    webProcess.ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::StartDownload(sessionID, policyDownloadID, request, suggestedName), 0);
+    Optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
+    isAppBound = m_isNavigatingToAppBoundDomain;
+    WebProcess::singleton().ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request,  isAppBound, suggestedName), 0);
 }
 
-void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader, PAL::SessionID sessionID, const ResourceRequest& request, const ResourceResponse& response)
+void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader, const ResourceRequest& request, const ResourceResponse& response)
 {
     ASSERT(m_policyDownloadID.downloadID());
 
@@ -313,7 +311,9 @@ void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader,
     else
         mainResourceLoadIdentifier = 0;
 
-    webProcess.ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::ConvertMainResourceLoadToDownload(sessionID, mainResourceLoadIdentifier, policyDownloadID, request, response), 0);
+    Optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
+    isAppBound = m_isNavigatingToAppBoundDomain;
+    webProcess.ensureNetworkProcessConnection().connection().send(Messages::NetworkConnectionToWebProcess::ConvertMainResourceLoadToDownload(mainResourceLoadIdentifier, policyDownloadID, request, response, isAppBound), 0);
 }
 
 void WebFrame::addConsoleMessage(MessageSource messageSource, MessageLevel messageLevel, const String& message, uint64_t requestID)
@@ -363,20 +363,15 @@ String WebFrame::contentsAsString() const
         return builder.toString();
     }
 
-    Document* document = m_coreFrame->document();
+    auto document = m_coreFrame->document();
     if (!document)
         return String();
 
-    RefPtr<Element> documentElement = document->documentElement();
+    auto documentElement = document->documentElement();
     if (!documentElement)
         return String();
 
-    RefPtr<Range> range = document->createRange();
-
-    if (range->selectNode(*documentElement).hasException())
-        return String();
-
-    return plainText(range.get());
+    return plainText(makeRangeSelectingNodeContents(*documentElement));
 }
 
 String WebFrame::selectionAsString() const 
@@ -523,7 +518,7 @@ JSGlobalContextRef WebFrame::jsContext()
     if (!m_coreFrame)
         return nullptr;
 
-    return toGlobalRef(m_coreFrame->script().globalObject(mainThreadNormalWorld())->globalExec());
+    return toGlobalRef(m_coreFrame->script().globalObject(mainThreadNormalWorld()));
 }
 
 JSGlobalContextRef WebFrame::jsContextForWorld(InjectedBundleScriptWorld* world)
@@ -531,7 +526,7 @@ JSGlobalContextRef WebFrame::jsContextForWorld(InjectedBundleScriptWorld* world)
     if (!m_coreFrame)
         return nullptr;
 
-    return toGlobalRef(m_coreFrame->script().globalObject(world->coreWorld())->globalExec());
+    return toGlobalRef(m_coreFrame->script().globalObject(world->coreWorld()));
 }
 
 bool WebFrame::handlesPageScaleGesture() const
@@ -644,7 +639,8 @@ RefPtr<InjectedBundleHitTestResult> WebFrame::hitTest(const IntPoint point) cons
     if (!m_coreFrame)
         return nullptr;
 
-    return InjectedBundleHitTestResult::create(m_coreFrame->eventHandler().hitTestResultAtPoint(point, HitTestRequest::ReadOnly | HitTestRequest::Active | HitTestRequest::IgnoreClipping | HitTestRequest::DisallowUserAgentShadowContent | HitTestRequest::AllowChildFrameContent));
+    constexpr OptionSet<HitTestRequest::RequestType> hitType { HitTestRequest::ReadOnly, HitTestRequest::Active, HitTestRequest::IgnoreClipping,  HitTestRequest::DisallowUserAgentShadowContent, HitTestRequest::AllowChildFrameContent };
+    return InjectedBundleHitTestResult::create(m_coreFrame->eventHandler().hitTestResultAtPoint(point, hitType));
 }
 
 bool WebFrame::getDocumentBackgroundColor(double* red, double* green, double* blue, double* alpha)
@@ -660,7 +656,11 @@ bool WebFrame::getDocumentBackgroundColor(double* red, double* green, double* bl
     if (!bgColor.isValid())
         return false;
 
-    bgColor.getRGBA(*red, *green, *blue, *alpha);
+    auto [r, g, b, a] = bgColor.toSRGBALossy<float>();
+    *red = r;
+    *green = g;
+    *blue = b;
+    *alpha = a;
     return true;
 }
 
@@ -669,17 +669,8 @@ bool WebFrame::containsAnyFormElements() const
     if (!m_coreFrame)
         return false;
     
-    Document* document = m_coreFrame->document();
-    if (!document)
-        return false;
-
-    for (Node* node = document->documentElement(); node; node = NodeTraversal::next(*node)) {
-        if (!is<Element>(*node))
-            continue;
-        if (is<HTMLFormElement>(*node))
-            return true;
-    }
-    return false;
+    auto* document = m_coreFrame->document();
+    return document && childrenOfType<HTMLFormElement>(*document).first();
 }
 
 bool WebFrame::containsAnyFormControls() const
@@ -687,14 +678,12 @@ bool WebFrame::containsAnyFormControls() const
     if (!m_coreFrame)
         return false;
     
-    Document* document = m_coreFrame->document();
+    auto* document = m_coreFrame->document();
     if (!document)
         return false;
 
-    for (Node* node = document->documentElement(); node; node = NodeTraversal::next(*node)) {
-        if (!is<Element>(*node))
-            continue;
-        if (is<HTMLInputElement>(*node) || is<HTMLSelectElement>(*node) || is<HTMLTextAreaElement>(*node))
+    for (auto& child : childrenOfType<Element>(*document)) {
+        if (is<HTMLTextFormControlElement>(child) || is<HTMLSelectElement>(child))
             return true;
     }
     return false;
@@ -710,12 +699,14 @@ void WebFrame::stopLoading()
 
 WebFrame* WebFrame::frameForContext(JSContextRef context)
 {
-
-    JSC::JSGlobalObject* globalObjectObj = toJS(context)->lexicalGlobalObject();
+    JSC::JSGlobalObject* globalObjectObj = toJS(context);
     JSDOMWindow* window = jsDynamicCast<JSDOMWindow*>(globalObjectObj->vm(), globalObjectObj);
     if (!window)
         return nullptr;
-    return WebFrame::fromCoreFrame(*(window->wrapped().frame()));
+    auto* coreFrame = window->wrapped().frame();
+    if (!coreFrame)
+        return nullptr;
+    return WebFrame::fromCoreFrame(*coreFrame);
 }
 
 JSValueRef WebFrame::jsWrapperForWorld(InjectedBundleNodeHandle* nodeHandle, InjectedBundleScriptWorld* world)
@@ -724,10 +715,9 @@ JSValueRef WebFrame::jsWrapperForWorld(InjectedBundleNodeHandle* nodeHandle, Inj
         return 0;
 
     JSDOMWindow* globalObject = m_coreFrame->script().globalObject(world->coreWorld());
-    ExecState* exec = globalObject->globalExec();
 
-    JSLockHolder lock(exec);
-    return toRef(exec, toJS(exec, globalObject, nodeHandle->coreNode()));
+    JSLockHolder lock(globalObject);
+    return toRef(globalObject, toJS(globalObject, globalObject, nodeHandle->coreNode()));
 }
 
 JSValueRef WebFrame::jsWrapperForWorld(InjectedBundleRangeHandle* rangeHandle, InjectedBundleScriptWorld* world)
@@ -736,15 +726,14 @@ JSValueRef WebFrame::jsWrapperForWorld(InjectedBundleRangeHandle* rangeHandle, I
         return 0;
 
     JSDOMWindow* globalObject = m_coreFrame->script().globalObject(world->coreWorld());
-    ExecState* exec = globalObject->globalExec();
 
-    JSLockHolder lock(exec);
-    return toRef(exec, toJS(exec, globalObject, rangeHandle->coreRange()));
+    JSLockHolder lock(globalObject);
+    return toRef(globalObject, toJS(globalObject, globalObject, rangeHandle->coreRange()));
 }
 
 String WebFrame::counterValue(JSObjectRef element)
 {
-    if (!toJS(element)->inherits<JSElement>(*toJS(element)->vm()))
+    if (!toJS(element)->inherits<JSElement>(toJS(element)->vm()))
         return String();
 
     return counterValueForElement(&jsCast<JSElement*>(toJS(element))->wrapped());
@@ -849,18 +838,44 @@ RefPtr<ShareableBitmap> WebFrame::createSelectionSnapshot() const
     if (!snapshot)
         return nullptr;
 
-    auto sharedSnapshot = ShareableBitmap::createShareable(snapshot->internalSize(), { });
+    auto sharedSnapshot = ShareableBitmap::createShareable(snapshot->backendSize(), { });
     if (!sharedSnapshot)
         return nullptr;
 
     // FIXME: We should consider providing a way to use subpixel antialiasing for the snapshot
     // if we're compositing this image onto a solid color (e.g. the modern find indicator style).
     auto graphicsContext = sharedSnapshot->createGraphicsContext();
+    if (!graphicsContext)
+        return nullptr;
+
     float deviceScaleFactor = coreFrame()->page()->deviceScaleFactor();
     graphicsContext->scale(deviceScaleFactor);
     graphicsContext->drawConsumingImageBuffer(WTFMove(snapshot), FloatPoint());
 
     return sharedSnapshot;
 }
+
+bool WebFrame::shouldEnableInAppBrowserPrivacyProtections()
+{
+    if (page() && page()->needsInAppBrowserPrivacyQuirks())
+        return false;
+
+    bool treeHasNonAppBoundFrame = m_isNavigatingToAppBoundDomain && m_isNavigatingToAppBoundDomain == NavigatingToAppBoundDomain::No;
+    if (!treeHasNonAppBoundFrame) {
+        for (WebFrame* frame = this; frame; frame = frame->parentFrame()) {
+            if (frame->isNavigatingToAppBoundDomain() && frame->isNavigatingToAppBoundDomain() == NavigatingToAppBoundDomain::No) {
+                treeHasNonAppBoundFrame = true;
+                break;
+            }
+        }
+    }
+    return treeHasNonAppBoundFrame;
+}
+
+Optional<NavigatingToAppBoundDomain> WebFrame::isTopFrameNavigatingToAppBoundDomain() const
+{
+    return fromCoreFrame(m_coreFrame->mainFrame())->isNavigatingToAppBoundDomain();
+}
+
     
 } // namespace WebKit

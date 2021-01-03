@@ -27,6 +27,7 @@
 
 #if ENABLE(WEB_RTC)
 
+#include "MDNSRegisterIdentifier.h"
 #include "RTCNetwork.h"
 #include <WebCore/DocumentIdentifier.h>
 #include <wtf/Expected.h>
@@ -65,8 +66,9 @@ public:
 
 private:
     void unregisterMDNSNames(WebCore::DocumentIdentifier);
-    void registerMDNSName(uint64_t requestIdentifier, PAL::SessionID, WebCore::DocumentIdentifier, const String& ipAddress);
-    void resolveMDNSName(uint64_t requestIdentifier, PAL::SessionID, const String& name);
+    void registerMDNSName(MDNSRegisterIdentifier, WebCore::DocumentIdentifier, const String& ipAddress);
+    
+    PAL::SessionID sessionID() const;
 
     NetworkConnectionToWebProcess& m_connection;
 #if ENABLE_MDNS

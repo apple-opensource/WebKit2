@@ -30,6 +30,7 @@
 #include <JavaScriptCore/InitializeThreading.h>
 #include <WebCore/LogInitialization.h>
 #include <wtf/MainThread.h>
+#include <wtf/RefCounted.h>
 #include <wtf/RunLoop.h>
 
 namespace WebKit {
@@ -38,8 +39,11 @@ namespace WebKit {
 
 void InitializeWebKit2()
 {
-    JSC::initializeThreading();
-    RunLoop::initializeMainRunLoop();
+    JSC::initialize();
+    WTF::initializeMainThread();
+    AtomString::init();
+
+    WTF::RefCountedBase::enableThreadingChecksGlobally();
 
 #if !LOG_DISABLED || !RELEASE_LOG_DISABLED
     WebCore::initializeLogChannelsIfNecessary();

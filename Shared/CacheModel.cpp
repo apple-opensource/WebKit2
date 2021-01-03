@@ -33,14 +33,14 @@
 
 namespace WebKit {
 
-void calculateMemoryCacheSizes(CacheModel cacheModel, unsigned& cacheTotalCapacity, unsigned& cacheMinDeadCapacity, unsigned& cacheMaxDeadCapacity, Seconds& deadDecodedDataDeletionInterval, unsigned& pageCacheCapacity)
+void calculateMemoryCacheSizes(CacheModel cacheModel, unsigned& cacheTotalCapacity, unsigned& cacheMinDeadCapacity, unsigned& cacheMaxDeadCapacity, Seconds& deadDecodedDataDeletionInterval, unsigned& backForwardCacheCapacity)
 {
     uint64_t memorySize = ramSize() / MB;
 
     switch (cacheModel) {
     case CacheModel::DocumentViewer: {
-        // Page cache capacity (in pages)
-        pageCacheCapacity = 0;
+        // back/forward cache capacity (in pages)
+        backForwardCacheCapacity = 0;
 
         // Object cache capacities (in bytes)
         if (memorySize >= 2048)
@@ -60,13 +60,13 @@ void calculateMemoryCacheSizes(CacheModel cacheModel, unsigned& cacheTotalCapaci
         break;
     }
     case CacheModel::DocumentBrowser: {
-        // Page cache capacity (in pages)
+        // back/forward cache capacity (in pages)
         if (memorySize >= 512)
-            pageCacheCapacity = 2;
+            backForwardCacheCapacity = 2;
         else if (memorySize >= 256)
-            pageCacheCapacity = 1;
+            backForwardCacheCapacity = 1;
         else
-            pageCacheCapacity = 0;
+            backForwardCacheCapacity = 0;
 
         // Object cache capacities (in bytes)
         if (memorySize >= 2048)
@@ -86,13 +86,13 @@ void calculateMemoryCacheSizes(CacheModel cacheModel, unsigned& cacheTotalCapaci
         break;
     }
     case CacheModel::PrimaryWebBrowser: {
-        // Page cache capacity (in pages)
+        // back/forward cache capacity (in pages)
         if (memorySize >= 512)
-            pageCacheCapacity = 2;
+            backForwardCacheCapacity = 2;
         else if (memorySize >= 256)
-            pageCacheCapacity = 1;
+            backForwardCacheCapacity = 1;
         else
-            pageCacheCapacity = 0;
+            backForwardCacheCapacity = 0;
 
         // Object cache capacities (in bytes)
         // (Testing indicates that value / MB depends heavily on content and
@@ -185,17 +185,17 @@ void calculateURLCacheSizes(CacheModel cacheModel, uint64_t diskFreeSize, unsign
 
         // Disk cache capacity (in bytes)
         if (diskFreeSize >= 16384)
-            urlCacheDiskCapacity = 500 * MB;
+            urlCacheDiskCapacity = 1 * GB;
         else if (diskFreeSize >= 8192)
-            urlCacheDiskCapacity = 250 * MB;
+            urlCacheDiskCapacity = 500 * MB;
         else if (diskFreeSize >= 4096)
-            urlCacheDiskCapacity = 125 * MB;
+            urlCacheDiskCapacity = 250 * MB;
         else if (diskFreeSize >= 2048)
-            urlCacheDiskCapacity = 100 * MB;
+            urlCacheDiskCapacity = 200 * MB;
         else if (diskFreeSize >= 1024)
-            urlCacheDiskCapacity = 75 * MB;
+            urlCacheDiskCapacity = 150 * MB;
         else
-            urlCacheDiskCapacity = 50 * MB;
+            urlCacheDiskCapacity = 100 * MB;
 
         break;
     }

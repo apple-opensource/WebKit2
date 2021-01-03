@@ -68,9 +68,9 @@ class WebPage;
 class Download : public IPC::MessageSender, public CanMakeWeakPtr<Download> {
     WTF_MAKE_NONCOPYABLE(Download); WTF_MAKE_FAST_ALLOCATED;
 public:
-    Download(DownloadManager&, DownloadID, NetworkDataTask&, const PAL::SessionID& sessionID, const String& suggestedFilename = { });
+    Download(DownloadManager&, DownloadID, NetworkDataTask&, NetworkSession&, const String& suggestedFilename = { });
 #if PLATFORM(COCOA)
-    Download(DownloadManager&, DownloadID, NSURLSessionDownloadTask*, const PAL::SessionID& sessionID, const String& suggestedFilename = { });
+    Download(DownloadManager&, DownloadID, NSURLSessionDownloadTask*, NetworkSession&, const String& suggestedFilename = { });
 #endif
 
     ~Download();
@@ -82,12 +82,13 @@ public:
 #endif
 
     DownloadID downloadID() const { return m_downloadID; }
+    PAL::SessionID sessionID() const { return m_sessionID; }
     const String& suggestedName() const { return m_suggestedName; }
 
     void setSandboxExtension(RefPtr<SandboxExtension>&& sandboxExtension) { m_sandboxExtension = WTFMove(sandboxExtension); }
     void didReceiveChallenge(const WebCore::AuthenticationChallenge&, ChallengeCompletionHandler&&);
     void didCreateDestination(const String& path);
-    void didReceiveData(uint64_t length);
+    void didReceiveData(uint64_t bytesWritten, uint64_t totalBytesWritten, uint64_t totalBytesExpectedToWrite);
     void didFinish();
     void didFail(const WebCore::ResourceError&, const IPC::DataReference& resumeData);
     void didCancel(const IPC::DataReference& resumeData);
@@ -98,6 +99,8 @@ public:
     void applicationDidEnterBackground() { m_monitor.applicationDidEnterBackground(); }
     void applicationWillEnterForeground() { m_monitor.applicationWillEnterForeground(); }
     DownloadManager& manager() const { return m_downloadManager; }
+
+    unsigned testSpeedMultiplier() const { return m_testSpeedMultiplier; }
 
 private:
     // IPC::MessageSender
@@ -124,6 +127,7 @@ private:
     bool m_wasCanceled { false };
     bool m_hasReceivedData { false };
     DownloadMonitor m_monitor { *this };
+    unsigned m_testSpeedMultiplier { 1 };
 };
 
 } // namespace WebKit

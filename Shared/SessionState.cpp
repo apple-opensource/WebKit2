@@ -45,7 +45,7 @@ bool isValidEnum(WebCore::ShouldOpenExternalURLsPolicy policy)
 
 void HTTPBody::Element::encode(IPC::Encoder& encoder) const
 {
-    encoder.encodeEnum(type);
+    encoder << type;
     encoder << data;
     encoder << filePath;
     encoder << fileStart;
@@ -69,7 +69,7 @@ static bool isValidEnum(HTTPBody::Element::Type type)
 auto HTTPBody::Element::decode(IPC::Decoder& decoder) -> Optional<Element>
 {
     Element result;
-    if (!decoder.decodeEnum(result.type) || !isValidEnum(result.type))
+    if (!decoder.decode(result.type) || !isValidEnum(result.type))
         return WTF::nullopt;
     if (!decoder.decode(result.data))
         return WTF::nullopt;
@@ -194,7 +194,7 @@ void PageState::encode(IPC::Encoder& encoder) const
     if (sessionStateObject)
         encoder << sessionStateObject->toWireBytes();
 
-    encoder.encodeEnum(shouldOpenExternalURLsPolicy);
+    encoder << shouldOpenExternalURLsPolicy;
 }
 
 bool PageState::decode(IPC::Decoder& decoder, PageState& result)
@@ -219,7 +219,7 @@ bool PageState::decode(IPC::Decoder& decoder, PageState& result)
         result.sessionStateObject = SerializedScriptValue::createFromWireBytes(WTFMove(wireBytes));
     }
 
-    if (!decoder.decodeEnum(result.shouldOpenExternalURLsPolicy) || !isValidEnum(result.shouldOpenExternalURLsPolicy))
+    if (!decoder.decode(result.shouldOpenExternalURLsPolicy) || !isValidEnum(result.shouldOpenExternalURLsPolicy))
         return false;
 
     return true;
@@ -229,6 +229,7 @@ void BackForwardListItemState::encode(IPC::Encoder& encoder) const
 {
     encoder << identifier;
     encoder << pageState;
+    encoder << hasCachedPage;
 }
 
 Optional<BackForwardListItemState> BackForwardListItemState::decode(IPC::Decoder& decoder)
@@ -241,6 +242,9 @@ Optional<BackForwardListItemState> BackForwardListItemState::decode(IPC::Decoder
     result.identifier = *identifier;
 
     if (!decoder.decode(result.pageState))
+        return WTF::nullopt;
+
+    if (!decoder.decode(result.hasCachedPage))
         return WTF::nullopt;
 
     return result;

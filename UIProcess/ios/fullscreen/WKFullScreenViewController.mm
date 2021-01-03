@@ -43,15 +43,8 @@
 static const NSTimeInterval showHideAnimationDuration = 0.1;
 static const NSTimeInterval pipHideAnimationDuration = 0.2;
 static const NSTimeInterval autoHideDelay = 4.0;
-static const double requiredScore = 0.1;
 
 @class WKFullscreenStackView;
-
-@interface WKFullScreenViewController (VideoFullscreenClientCallbacks)
-- (void)willEnterPictureInPicture;
-- (void)didEnterPictureInPicture;
-- (void)failedToEnterPictureInPicture;
-@end
 
 class WKFullScreenViewControllerPlaybackSessionModelClient : WebCore::PlaybackSessionModelClient {
 public:
@@ -86,44 +79,6 @@ public:
 private:
     WKFullScreenViewController *m_parent { nullptr };
     RefPtr<WebCore::PlaybackSessionInterfaceAVKit> m_interface;
-};
-
-class WKFullScreenViewControllerVideoFullscreenModelClient : WebCore::VideoFullscreenModelClient {
-public:
-    void setParent(WKFullScreenViewController *parent) { m_parent = parent; }
-
-    void setInterface(WebCore::VideoFullscreenInterfaceAVKit* interface)
-    {
-        if (m_interface == interface)
-            return;
-
-        if (m_interface && m_interface->videoFullscreenModel())
-            m_interface->videoFullscreenModel()->removeClient(*this);
-        m_interface = interface;
-        if (m_interface && m_interface->videoFullscreenModel())
-            m_interface->videoFullscreenModel()->addClient(*this);
-    }
-
-    WebCore::VideoFullscreenInterfaceAVKit* interface() const { return m_interface.get(); }
-
-    void willEnterPictureInPicture() final
-    {
-        [m_parent willEnterPictureInPicture];
-    }
-
-    void didEnterPictureInPicture() final
-    {
-        [m_parent didEnterPictureInPicture];
-    }
-
-    void failedToEnterPictureInPicture() final
-    {
-        [m_parent failedToEnterPictureInPicture];
-    }
-
-private:
-    WKFullScreenViewController *m_parent { nullptr };
-    RefPtr<WebCore::VideoFullscreenInterfaceAVKit> m_interface;
 };
 
 #pragma mark - _WKExtrinsicButton
@@ -164,7 +119,6 @@ private:
     RetainPtr<NSLayoutConstraint> _topConstraint;
     WebKit::FullscreenTouchSecheuristic _secheuristic;
     WKFullScreenViewControllerPlaybackSessionModelClient _playbackClient;
-    WKFullScreenViewControllerVideoFullscreenModelClient _videoFullscreenClient;
     CGFloat _nonZeroStatusBarHeight;
 }
 
@@ -183,16 +137,11 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     _nonZeroStatusBarHeight = UIApplication.sharedApplication.statusBarFrame.size.height;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_statusBarFrameDidChange:) name:UIApplicationDidChangeStatusBarFrameNotification object:nil];
 ALLOW_DEPRECATED_DECLARATIONS_END
-    _secheuristic.setRampUpSpeed(Seconds(0.25));
-    _secheuristic.setRampDownSpeed(Seconds(1.));
-    _secheuristic.setXWeight(0);
-    _secheuristic.setGamma(0.1);
-    _secheuristic.setGammaCutoff(0.08);
+    _secheuristic.setParameters(WebKit::FullscreenTouchSecheuristicParameters::iosParameters());
 
     self._webView = webView;
 
     _playbackClient.setParent(self);
-    _videoFullscreenClient.setParent(self);
 
     return self;
 }
@@ -204,8 +153,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     _playbackClient.setParent(nullptr);
     _playbackClient.setInterface(nullptr);
-    _videoFullscreenClient.setParent(nullptr);
-    _videoFullscreenClient.setInterface(nullptr);
 
     [_target release];
     [_location release];
@@ -259,17 +206,27 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)videoControlsManagerDidChange
 {
-    WebKit::WebPageProxy* page = [self._webView _page];
+    auto page = [self._webView _page];
     auto* videoFullscreenManager = page ? page->videoFullscreenManager() : nullptr;
     auto* videoFullscreenInterface = videoFullscreenManager ? videoFullscreenManager->controlsManagerInterface() : nullptr;
     auto* playbackSessionInterface = videoFullscreenInterface ? &videoFullscreenInterface->playbackSessionInterface() : nullptr;
 
     _playbackClient.setInterface(playbackSessionInterface);
-    _videoFullscreenClient.setInterface(videoFullscreenInterface);
 
     WebCore::PlaybackSessionModel* playbackSessionModel = playbackSessionInterface ? playbackSessionInterface->playbackSessionModel() : nullptr;
     self.playing = playbackSessionModel ? playbackSessionModel->isPlaying() : NO;
-    [_pipButton setHidden:!playbackSessionModel];
+    bool isPiPEnabled = false;
+    if (auto page = [self._webView _page])
+        isPiPEnabled = page->preferences().pictureInPictureAPIEnabled() && page->preferences().allowsPictureInPictureMediaPlayback();
+    bool isPiPSupported = playbackSessionModel && playbackSessionModel->isPictureInPictureSupported();
+    [_pipButton setHidden:!isPiPEnabled || !isPiPSupported];
+}
+
+- (void)setAnimatingViewAlpha:(CGFloat)alpha
+{
+    [UIView animateWithDuration:pipHideAnimationDuration animations:^{
+        _animatingView.get().alpha = alpha;
+    }];
 }
 
 - (void)setPrefersStatusBarHidden:(BOOL)value
@@ -328,33 +285,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         [self hideUI];
     else
         [self showUI];
-}
-
-- (void)willEnterPictureInPicture
-{
-    auto* interface = _videoFullscreenClient.interface();
-    if (!interface || !interface->pictureInPictureWasStartedWhenEnteringBackground())
-        return;
-
-    [UIView animateWithDuration:pipHideAnimationDuration animations:^{
-        _animatingView.get().alpha = 0;
-    }];
-}
-
-- (void)didEnterPictureInPicture
-{
-    [self _cancelAction:self];
-}
-
-- (void)failedToEnterPictureInPicture
-{
-    auto* interface = _videoFullscreenClient.interface();
-    if (!interface || !interface->pictureInPictureWasStartedWhenEnteringBackground())
-        return;
-
-    [UIView animateWithDuration:pipHideAnimationDuration animations:^{
-        _animatingView.get().alpha = 1;
-    }];
 }
 
 #pragma mark - UIViewController Overrides
@@ -484,7 +414,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 @dynamic _manager;
 - (WebKit::WebFullScreenManagerProxy*)_manager
 {
-    if (auto* page = [self._webView _page])
+    if (auto page = [self._webView _page])
         return page->fullScreenManager();
     return nullptr;
 }
@@ -503,12 +433,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_cancelAction:(id)sender
 {
-    [[self target] performSelector:[self action]];
+    [[self target] performSelector:[self exitFullScreenAction]];
 }
 
 - (void)_togglePiPAction:(id)sender
 {
-    WebKit::WebPageProxy* page = [self._webView _page];
+    auto page = [self._webView _page];
     if (!page)
         return;
 
@@ -531,7 +461,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 {
     if ([_touchGestureRecognizer state] == UIGestureRecognizerStateEnded) {
         double score = _secheuristic.scoreOfNextTouch([_touchGestureRecognizer locationInView:self.view]);
-        if (score > requiredScore)
+        if (score > _secheuristic.requiredScore())
             [self _showPhishingAlert];
     }
     if (!self.animating)
@@ -562,21 +492,21 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     NSString *alertMessage = [NSString stringWithFormat:WEB_UI_STRING("Typing is not allowed in full screen websites. “%@” may be showing a fake keyboard to trick you into disclosing personal or financial information.", "Full Screen Deceptive Website Warning Sheet Content Text"), (NSString *)self.location];
     UIAlertController* alert = [UIAlertController alertControllerWithTitle:alertTitle message:alertMessage preferredStyle:UIAlertControllerStyleAlert];
 
-    if (auto* page = [self._webView _page]) {
+    if (auto page = [self._webView _page]) {
         page->suspendAllMediaPlayback();
         page->suspendActiveDOMObjectsAndAnimations();
     }
 
     UIAlertAction* exitAction = [UIAlertAction actionWithTitle:WEB_UI_STRING_KEY("Exit Full Screen", "Exit Full Screen (Element Full Screen)", "Full Screen Deceptive Website Exit Action") style:UIAlertActionStyleCancel handler:^(UIAlertAction * action) {
         [self _cancelAction:action];
-        if (auto* page = [self._webView _page]) {
+        if (auto page = [self._webView _page]) {
             page->resumeActiveDOMObjectsAndAnimations();
             page->resumeAllMediaPlayback();
         }
     }];
 
     UIAlertAction* stayAction = [UIAlertAction actionWithTitle:WEB_UI_STRING_KEY("Stay in Full Screen", "Stay in Full Screen (Element Full Screen)", "Full Screen Deceptive Website Stay Action") style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
-        if (auto* page = [self._webView _page]) {
+        if (auto page = [self._webView _page]) {
             page->resumeActiveDOMObjectsAndAnimations();
             page->resumeAllMediaPlayback();
         }

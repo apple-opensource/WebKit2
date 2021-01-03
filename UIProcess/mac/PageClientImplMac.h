@@ -32,7 +32,7 @@
 #include "WebFullScreenManagerProxy.h"
 #include <WebCore/DOMPasteAccess.h>
 #include <wtf/CompletionHandler.h>
-#include <wtf/RetainPtr.h>
+#include <wtf/Forward.h>
 
 @class WKEditorUndoTarget;
 @class WKView;
@@ -152,8 +152,9 @@ private:
     void enterAcceleratedCompositingMode(const LayerTreeContext&) override;
     void exitAcceleratedCompositingMode() override;
     void updateAcceleratedCompositingMode(const LayerTreeContext&) override;
+    void didFirstLayerFlush(const LayerTreeContext&) override;
 
-    RefPtr<ViewSnapshot> takeViewSnapshot() override;
+    RefPtr<ViewSnapshot> takeViewSnapshot(Optional<WebCore::IntRect>&&) override;
     void wheelEventWasNotHandledByWebCore(const NativeWebWheelEvent&) override;
 #if ENABLE(MAC_GESTURE_EVENTS)
     void gestureEventWasNotHandledByWebCore(const NativeWebGestureEvent&) override;
@@ -179,17 +180,11 @@ private:
 
     void intrinsicContentSizeDidChange(const WebCore::IntSize& intrinsicContentSize) override;
 
-#if USE(DICTATION_ALTERNATIVES)
-    uint64_t addDictationAlternatives(const RetainPtr<NSTextAlternatives>&) override;
-    void removeDictationAlternatives(uint64_t dictationContext) override;
-    void showDictationAlternativeUI(const WebCore::FloatRect& boundingBoxOfDictatedText, uint64_t dictationContext) override;
-    Vector<String> dictationAlternatives(uint64_t dictationContext) override;
-#endif
+    void showDictationAlternativeUI(const WebCore::FloatRect& boundingBoxOfDictatedText, WebCore::DictationContext) final;
+
     void setEditableElementIsFocused(bool) override;
 
-#if USE(INSERTION_UNDO_GROUPING)
     void registerInsertionUndoGrouping() override;
-#endif
 
     // Auxiliary Client Creation
 #if ENABLE(FULLSCREEN_API)
@@ -213,15 +208,15 @@ private:
     void willRecordNavigationSnapshot(WebBackForwardListItem&) override;
     void didRemoveNavigationGestureSnapshot() override;
 
-    void requestDOMPasteAccess(const WebCore::IntRect&, const String& originIdentifier, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completion) final { completion(WebCore::DOMPasteAccessResponse::DeniedForGesture); }
+    void requestDOMPasteAccess(const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) final;
 
     NSView *activeView() const;
     NSWindow *activeWindow() const;
 
     void didStartProvisionalLoadForMainFrame() override;
     void didFirstVisuallyNonEmptyLayoutForMainFrame() override;
-    void didFinishLoadForMainFrame() override;
-    void didFailLoadForMainFrame() override;
+    void didFinishNavigation(API::Navigation*) override;
+    void didFailNavigation(API::Navigation*) override;
     void didSameDocumentNavigationForMainFrame(SameDocumentNavigationType) override;
     void handleControlledElementIDResponse(const String&) override;
 
@@ -250,8 +245,6 @@ private:
     NSView *inspectorAttachmentView() override;
     _WKRemoteObjectRegistry *remoteObjectRegistry() override;
 
-    void didFinishProcessingAllPendingMouseEvents() final;
-
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     WebCore::WebMediaSessionManager& mediaSessionManager() override;
 #endif
@@ -264,13 +257,14 @@ private:
 
     void takeFocus(WebCore::FocusDirection) override;
 
+#if HAVE(APP_ACCENT_COLORS)
+    WebCore::Color accentColor() override;
+#endif
+
     NSView *m_view;
     WeakPtr<WebViewImpl> m_impl;
 #if USE(AUTOCORRECTION_PANEL)
     CorrectionPanel m_correctionPanel;
-#endif
-#if USE(DICTATION_ALTERNATIVES)
-    std::unique_ptr<WebCore::AlternativeTextUIController> m_alternativeTextUIController;
 #endif
 
     bool m_shouldSuppressFirstResponderChanges { false };

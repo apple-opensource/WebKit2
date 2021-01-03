@@ -29,6 +29,11 @@
 
 typedef struct _cairo cairo_t;
 
+#if USE(GTK4)
+typedef struct _GdkSnapshot GdkSnapshot;
+typedef GdkSnapshot GtkSnapshot;
+#endif
+
 namespace WebCore {
 class IntRect;
 }
@@ -41,11 +46,18 @@ class WebPageProxy;
 class AcceleratedBackingStore {
     WTF_MAKE_NONCOPYABLE(AcceleratedBackingStore); WTF_MAKE_FAST_ALLOCATED;
 public:
+    static bool checkRequirements();
     static std::unique_ptr<AcceleratedBackingStore> create(WebPageProxy&);
     virtual ~AcceleratedBackingStore() = default;
 
     virtual void update(const LayerTreeContext&) { }
+#if USE(GTK4)
+    virtual void snapshot(GtkSnapshot*) = 0;
+#else
     virtual bool paint(cairo_t*, const WebCore::IntRect&) = 0;
+#endif
+    virtual void realize() { };
+    virtual void unrealize() { };
     virtual bool makeContextCurrent() { return false; }
     virtual int renderHostFileDescriptor() { return -1; }
 

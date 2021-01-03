@@ -40,6 +40,7 @@
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/PageOverlay.h>
 #include <WebCore/PlatformMouseEvent.h>
+#include <WebCore/Range.h>
 
 namespace API {
 
@@ -54,6 +55,7 @@ template<> struct ClientTraits<WKBundlePageOverlayAccessibilityClientBase> {
 }
 
 class PageOverlayClientImpl : API::Client<WKBundlePageOverlayClientBase>, public WebKit::WebPageOverlay::Client {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit PageOverlayClientImpl(WKBundlePageOverlayClientBase* client)
     {
@@ -127,19 +129,17 @@ private:
     }
 
 #if PLATFORM(MAC)
-    DDActionContext *actionContextForResultAtPoint(WebKit::WebPageOverlay& pageOverlay, WebCore::FloatPoint location, RefPtr<WebCore::Range>& rangeHandle) override
+    Optional<WebKit::WebPageOverlay::ActionContext> actionContextForResultAtPoint(WebKit::WebPageOverlay& pageOverlay, WebCore::FloatPoint location) final
     {
-        if (m_client.actionContextForResultAtPoint) {
-            WKBundleRangeHandleRef apiRange = nullptr;
-            DDActionContext *actionContext = (DDActionContext *)m_client.actionContextForResultAtPoint(toAPI(&pageOverlay), WKPointMake(location.x(), location.y()), &apiRange, m_client.base.clientInfo);
+        if (!m_client.actionContextForResultAtPoint)
+            return WTF::nullopt;
 
-            if (apiRange)
-                rangeHandle = &WebKit::toImpl(apiRange)->coreRange();
+        WKBundleRangeHandleRef apiRange = nullptr;
+        auto actionContext = (DDActionContext *)m_client.actionContextForResultAtPoint(toAPI(&pageOverlay), WKPointMake(location.x(), location.y()), &apiRange, m_client.base.clientInfo);
+        if (!actionContext || !apiRange)
+            return WTF::nullopt;
 
-            return actionContext;
-        }
-
-        return nil;
+        return { { actionContext, makeSimpleRange(WebKit::toImpl(apiRange)->coreRange()) } };
     }
 
     void dataDetectorsDidPresentUI(WebKit::WebPageOverlay& pageOverlay) override
@@ -216,7 +216,7 @@ WKTypeID WKBundlePageOverlayGetTypeID()
 
 WKBundlePageOverlayRef WKBundlePageOverlayCreate(WKBundlePageOverlayClientBase* wkClient)
 {
-    auto clientImpl = std::make_unique<PageOverlayClientImpl>(wkClient);
+    auto clientImpl = makeUnique<PageOverlayClientImpl>(wkClient);
     return toAPI(&WebKit::WebPageOverlay::create(WTFMove(clientImpl)).leakRef());
 }
 

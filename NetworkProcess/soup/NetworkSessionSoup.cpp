@@ -40,14 +40,21 @@ namespace WebKit {
 using namespace WebCore;
 
 NetworkSessionSoup::NetworkSessionSoup(NetworkProcess& networkProcess, NetworkSessionCreationParameters&& parameters)
-    : NetworkSession(networkProcess, parameters.sessionID, WTFMove(parameters.localStorageDirectory), parameters.localStorageDirectoryExtensionHandle)
+    : NetworkSession(networkProcess, parameters)
+    , m_networkSession(makeUnique<SoupNetworkSession>(m_sessionID))
+    , m_persistentCredentialStorageEnabled(parameters.persistentCredentialStorageEnabled)
 {
-    networkStorageSession()->setCookieObserverHandler([this] {
-        this->networkProcess().supplement<WebCookieManager>()->notifyCookiesDidChange(m_sessionID);
-    });
+    auto* storageSession = networkStorageSession();
+    ASSERT(storageSession);
 
     if (!parameters.cookiePersistentStoragePath.isEmpty())
-        this->networkProcess().supplement<WebCookieManager>()->setCookiePersistentStorage(m_sessionID, parameters.cookiePersistentStoragePath, parameters.cookiePersistentStorageType);
+        setCookiePersistentStorage(parameters.cookiePersistentStoragePath, parameters.cookiePersistentStorageType);
+    else
+        m_networkSession->setCookieJar(storageSession->cookieStorage());
+
+    storageSession->setCookieObserverHandler([this] {
+        this->networkProcess().supplement<WebCookieManager>()->notifyCookiesDidChange(m_sessionID);
+    });
 }
 
 NetworkSessionSoup::~NetworkSessionSoup()
@@ -58,7 +65,27 @@ NetworkSessionSoup::~NetworkSessionSoup()
 
 SoupSession* NetworkSessionSoup::soupSession() const
 {
-    return networkStorageSession()->soupNetworkSession().soupSession();
+    return m_networkSession->soupSession();
+}
+
+void NetworkSessionSoup::setCookiePersistentStorage(const String& storagePath, SoupCookiePersistentStorageType storageType)
+{
+    auto* storageSession = networkStorageSession();
+    if (!storageSession)
+        return;
+
+    GRefPtr<SoupCookieJar> jar;
+    switch (storageType) {
+    case SoupCookiePersistentStorageType::Text:
+        jar = adoptGRef(soup_cookie_jar_text_new(storagePath.utf8().data(), FALSE));
+        break;
+    case SoupCookiePersistentStorageType::SQLite:
+        jar = adoptGRef(soup_cookie_jar_db_new(storagePath.utf8().data(), FALSE));
+        break;
+    }
+    storageSession->setCookieStorage(WTFMove(jar));
+
+    m_networkSession->setCookieJar(storageSession->cookieStorage());
 }
 
 void NetworkSessionSoup::clearCredentials()
@@ -91,10 +118,10 @@ std::unique_ptr<WebSocketTask> NetworkSessionSoup::createWebSocketTask(NetworkSo
         return nullptr;
 
     GRefPtr<SoupMessage> soupMessage = adoptGRef(soup_message_new_from_uri(SOUP_METHOD_GET, soupURI.get()));
-    request.updateSoupMessage(soupMessage.get());
+    request.updateSoupMessage(soupMessage.get(), blobRegistry());
     if (request.url().protocolIs("wss"))
         g_signal_connect(soupMessage.get(), "network-event", G_CALLBACK(webSocketMessageNetworkEventCallback), nullptr);
-    return std::make_unique<WebSocketTask>(channel, soupSession(), soupMessage.get(), protocol);
+    return makeUnique<WebSocketTask>(channel, soupSession(), soupMessage.get(), protocol);
 }
 
 } // namespace WebKit

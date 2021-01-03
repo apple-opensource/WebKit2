@@ -55,7 +55,7 @@ WKTypeID WKBundleGetTypeID()
 
 void WKBundleSetClient(WKBundleRef bundleRef, WKBundleClientBase *wkClient)
 {
-    WebKit::toImpl(bundleRef)->setClient(std::make_unique<WebKit::InjectedBundleClient>(wkClient));
+    WebKit::toImpl(bundleRef)->setClient(makeUnique<WebKit::InjectedBundleClient>(wkClient));
 }
 
 void WKBundleSetServiceWorkerProxyCreationCallback(WKBundleRef bundleRef, void (*callback)(uint64_t))
@@ -96,39 +96,32 @@ size_t WKBundleGetJavaScriptObjectsCount(WKBundleRef bundleRef)
     return WebKit::toImpl(bundleRef)->javaScriptObjectsCount();
 }
 
-void WKBundleAddUserScript(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKBundleScriptWorldRef scriptWorldRef, WKStringRef sourceRef, WKURLRef urlRef, WKArrayRef whitelistRef, WKArrayRef blacklistRef, _WKUserScriptInjectionTime injectionTimeRef, WKUserContentInjectedFrames injectedFramesRef)
+void WKBundleAddUserScript(WKBundleRef, WKBundlePageGroupRef, WKBundleScriptWorldRef, WKStringRef, WKURLRef, WKArrayRef, WKArrayRef, _WKUserScriptInjectionTime, WKUserContentInjectedFrames)
 {
-    WebKit::toImpl(bundleRef)->addUserScript(WebKit::toImpl(pageGroupRef), WebKit::toImpl(scriptWorldRef), WebKit::toWTFString(sourceRef), WebKit::toWTFString(urlRef), WebKit::toImpl(whitelistRef), WebKit::toImpl(blacklistRef), WebKit::toUserScriptInjectionTime(injectionTimeRef), WebKit::toUserContentInjectedFrames(injectedFramesRef));
 }
 
-void WKBundleAddUserStyleSheet(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKBundleScriptWorldRef scriptWorldRef, WKStringRef sourceRef, WKURLRef urlRef, WKArrayRef whitelistRef, WKArrayRef blacklistRef, WKUserContentInjectedFrames injectedFramesRef)
+void WKBundleAddUserStyleSheet(WKBundleRef, WKBundlePageGroupRef, WKBundleScriptWorldRef, WKStringRef, WKURLRef, WKArrayRef, WKArrayRef, WKUserContentInjectedFrames)
 {
-    WebKit::toImpl(bundleRef)->addUserStyleSheet(WebKit::toImpl(pageGroupRef), WebKit::toImpl(scriptWorldRef), WebKit::toWTFString(sourceRef), WebKit::toWTFString(urlRef), WebKit::toImpl(whitelistRef), WebKit::toImpl(blacklistRef), WebKit::toUserContentInjectedFrames(injectedFramesRef));
 }
 
-void WKBundleRemoveUserScript(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKBundleScriptWorldRef scriptWorldRef, WKURLRef urlRef)
+void WKBundleRemoveUserScript(WKBundleRef, WKBundlePageGroupRef, WKBundleScriptWorldRef, WKURLRef)
 {
-    WebKit::toImpl(bundleRef)->removeUserScript(WebKit::toImpl(pageGroupRef), WebKit::toImpl(scriptWorldRef), WebKit::toWTFString(urlRef));
 }
 
-void WKBundleRemoveUserStyleSheet(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKBundleScriptWorldRef scriptWorldRef, WKURLRef urlRef)
+void WKBundleRemoveUserStyleSheet(WKBundleRef, WKBundlePageGroupRef, WKBundleScriptWorldRef, WKURLRef)
 {
-    WebKit::toImpl(bundleRef)->removeUserStyleSheet(WebKit::toImpl(pageGroupRef), WebKit::toImpl(scriptWorldRef), WebKit::toWTFString(urlRef));
 }
 
-void WKBundleRemoveUserScripts(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKBundleScriptWorldRef scriptWorldRef)
+void WKBundleRemoveUserScripts(WKBundleRef, WKBundlePageGroupRef, WKBundleScriptWorldRef)
 {
-    WebKit::toImpl(bundleRef)->removeUserScripts(WebKit::toImpl(pageGroupRef), WebKit::toImpl(scriptWorldRef));
 }
 
-void WKBundleRemoveUserStyleSheets(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKBundleScriptWorldRef scriptWorldRef)
+void WKBundleRemoveUserStyleSheets(WKBundleRef, WKBundlePageGroupRef, WKBundleScriptWorldRef)
 {
-    WebKit::toImpl(bundleRef)->removeUserStyleSheets(WebKit::toImpl(pageGroupRef), WebKit::toImpl(scriptWorldRef));
 }
 
-void WKBundleRemoveAllUserContent(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef)
+void WKBundleRemoveAllUserContent(WKBundleRef, WKBundlePageGroupRef)
 {
-    WebKit::toImpl(bundleRef)->removeAllUserContent(WebKit::toImpl(pageGroupRef));
 }
 
 void WKBundleOverrideBoolPreferenceForTestRunner(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, WKStringRef preference, bool enabled)
@@ -166,11 +159,6 @@ void WKBundleSetJavaScriptCanAccessClipboard(WKBundleRef bundleRef, WKBundlePage
     WebKit::toImpl(bundleRef)->setJavaScriptCanAccessClipboard(WebKit::toImpl(pageGroupRef), enabled);
 }
 
-void WKBundleSetPrivateBrowsingEnabled(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, bool enabled)
-{
-    WebKit::toImpl(bundleRef)->setPrivateBrowsingEnabled(WebKit::toImpl(pageGroupRef), enabled);
-}
-
 void WKBundleSetPopupBlockingEnabled(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, bool enabled)
 {
     WebKit::toImpl(bundleRef)->setPopupBlockingEnabled(WebKit::toImpl(pageGroupRef), enabled);
@@ -186,19 +174,19 @@ void WKBundleSetSpatialNavigationEnabled(WKBundleRef bundleRef, WKBundlePageGrou
     WebKit::toImpl(bundleRef)->setSpatialNavigationEnabled(WebKit::toImpl(pageGroupRef), enabled);
 }
 
-void WKBundleAddOriginAccessWhitelistEntry(WKBundleRef bundleRef, WKStringRef sourceOrigin, WKStringRef destinationProtocol, WKStringRef destinationHost, bool allowDestinationSubdomains)
+void WKBundleAddOriginAccessAllowListEntry(WKBundleRef bundleRef, WKStringRef sourceOrigin, WKStringRef destinationProtocol, WKStringRef destinationHost, bool allowDestinationSubdomains)
 {
-    WebKit::toImpl(bundleRef)->addOriginAccessWhitelistEntry(WebKit::toWTFString(sourceOrigin), WebKit::toWTFString(destinationProtocol), WebKit::toWTFString(destinationHost), allowDestinationSubdomains);
+    WebKit::toImpl(bundleRef)->addOriginAccessAllowListEntry(WebKit::toWTFString(sourceOrigin), WebKit::toWTFString(destinationProtocol), WebKit::toWTFString(destinationHost), allowDestinationSubdomains);
 }
 
-void WKBundleRemoveOriginAccessWhitelistEntry(WKBundleRef bundleRef, WKStringRef sourceOrigin, WKStringRef destinationProtocol, WKStringRef destinationHost, bool allowDestinationSubdomains)
+void WKBundleRemoveOriginAccessAllowListEntry(WKBundleRef bundleRef, WKStringRef sourceOrigin, WKStringRef destinationProtocol, WKStringRef destinationHost, bool allowDestinationSubdomains)
 {
-    WebKit::toImpl(bundleRef)->removeOriginAccessWhitelistEntry(WebKit::toWTFString(sourceOrigin), WebKit::toWTFString(destinationProtocol), WebKit::toWTFString(destinationHost), allowDestinationSubdomains);
+    WebKit::toImpl(bundleRef)->removeOriginAccessAllowListEntry(WebKit::toWTFString(sourceOrigin), WebKit::toWTFString(destinationProtocol), WebKit::toWTFString(destinationHost), allowDestinationSubdomains);
 }
 
-void WKBundleResetOriginAccessWhitelists(WKBundleRef bundleRef)
+void WKBundleResetOriginAccessAllowLists(WKBundleRef bundleRef)
 {
-    WebKit::toImpl(bundleRef)->resetOriginAccessWhitelists();
+    WebKit::toImpl(bundleRef)->resetOriginAccessAllowLists();
 }
 
 void WKBundleSetAsynchronousSpellCheckingEnabled(WKBundleRef bundleRef, WKBundlePageGroupRef pageGroupRef, bool enabled)
@@ -311,9 +299,13 @@ void WKBundleClearResourceLoadStatistics(WKBundleRef)
     WebCore::ResourceLoadObserver::shared().clearState();
 }
 
-void WKBundleResourceLoadStatisticsNotifyObserver(WKBundleRef)
+bool WKBundleResourceLoadStatisticsNotifyObserver(WKBundleRef)
 {
-    WebCore::ResourceLoadObserver::shared().updateCentralStatisticsStore();
+    if (!WebCore::ResourceLoadObserver::shared().hasStatistics())
+        return false;
+
+    WebCore::ResourceLoadObserver::shared().updateCentralStatisticsStore([] { });
+    return true;
 }
 
 

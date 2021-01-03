@@ -42,7 +42,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-#pragma mark Commands for Platform: 'macOS'
+#pragma mark Commands for 'PLATFORM(MAC)'
 
 void WebAutomationSession::inspectBrowsingContext(const String& handle, const bool* optionalEnableAutoCapturing, Ref<InspectBrowsingContextCallback>&& callback)
 {
@@ -50,14 +50,14 @@ void WebAutomationSession::inspectBrowsingContext(const String& handle, const bo
     if (!page)
         ASYNC_FAIL_WITH_PREDEFINED_ERROR(WindowNotFound);
 
-    if (auto callback = m_pendingInspectorCallbacksPerPage.take(page->pageID()))
+    if (auto callback = m_pendingInspectorCallbacksPerPage.take(page->identifier()))
         callback->sendFailure(STRING_FOR_PREDEFINED_ERROR_NAME(Timeout));
-    m_pendingInspectorCallbacksPerPage.set(page->pageID(), WTFMove(callback));
+    m_pendingInspectorCallbacksPerPage.set(page->identifier(), WTFMove(callback));
 
     // Don't bring the inspector to front since this may be done automatically.
     // We just want it loaded so it can pause if a breakpoint is hit during a command.
     if (page->inspector()) {
-        page->inspector()->connect();
+        page->inspector()->show();
 
         // Start collecting profile information immediately so the entire session is captured.
         if (optionalEnableAutoCapturing && *optionalEnableAutoCapturing)
@@ -73,13 +73,16 @@ static const void *synthesizedAutomationEventAssociatedObjectKey = &synthesizedA
 void WebAutomationSession::sendSynthesizedEventsToPage(WebPageProxy& page, NSArray *eventsToSend)
 {
     NSWindow *window = page.platformWindow();
+    [window makeKeyAndOrderFront:nil];
+    page.makeFirstResponder();
 
     for (NSEvent *event in eventsToSend) {
         LOG(Automation, "Sending event[%p] to window[%p]: %@", event, window, event);
 
         // Take focus back in case the Inspector became focused while the prior command or
         // NSEvent was delivered to the window.
-        [window becomeKeyWindow];
+        [window makeKeyAndOrderFront:nil];
+        page.makeFirstResponder();
 
         markEventAsSynthesizedForAutomation(event);
         [window sendEvent:event];
@@ -121,10 +124,23 @@ bool WebAutomationSession::wasEventSynthesizedForAutomation(NSEvent *event)
 #pragma mark Platform-dependent Implementations
 
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
-void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, MouseInteraction interaction, WebMouseEvent::Button button, const WebCore::IntPoint& locationInViewport, OptionSet<WebEvent::Modifier> keyModifiers)
+
+static WebMouseEvent::Button automationMouseButtonToPlatformMouseButton(MouseButton button)
+{
+    switch (button) {
+    case MouseButton::Left:   return WebMouseEvent::LeftButton;
+    case MouseButton::Middle: return WebMouseEvent::MiddleButton;
+    case MouseButton::Right:  return WebMouseEvent::RightButton;
+    case MouseButton::None:   return WebMouseEvent::NoButton;
+    default: ASSERT_NOT_REACHED();
+    }
+}
+
+void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, MouseInteraction interaction, MouseButton button, const WebCore::IntPoint& locationInViewport, OptionSet<WebEvent::Modifier> keyModifiers)
 {
     IntRect windowRect;
-    IntPoint locationInView = WebCore::IntPoint(locationInViewport.x(), locationInViewport.y() + page.topContentInset());
+
+    IntPoint locationInView = locationInViewport + IntPoint(0, page.topContentInset());
     page.rootViewToWindow(IntRect(locationInView, IntSize()), windowRect);
     IntPoint locationInWindow = windowRect.location();
 
@@ -147,7 +163,7 @@ void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, 
     NSEventType downEventType = (NSEventType)0;
     NSEventType dragEventType = (NSEventType)0;
     NSEventType upEventType = (NSEventType)0;
-    switch (button) {
+    switch (automationMouseButtonToPlatformMouseButton(button)) {
     case WebMouseEvent::NoButton:
         downEventType = upEventType = dragEventType = NSEventTypeMouseMoved;
         break;
@@ -212,6 +228,25 @@ void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, 
 
     sendSynthesizedEventsToPage(page, eventsToBeSent.get());
 }
+
+OptionSet<WebEvent::Modifier> WebAutomationSession::platformWebModifiersFromRaw(unsigned modifiers)
+{
+    OptionSet<WebEvent::Modifier> webModifiers;
+
+    if (modifiers & NSEventModifierFlagCommand)
+        webModifiers.add(WebEvent::Modifier::MetaKey);
+    if (modifiers & NSEventModifierFlagOption)
+        webModifiers.add(WebEvent::Modifier::AltKey);
+    if (modifiers & NSEventModifierFlagControl)
+        webModifiers.add(WebEvent::Modifier::ControlKey);
+    if (modifiers & NSEventModifierFlagShift)
+        webModifiers.add(WebEvent::Modifier::ShiftKey);
+    if (modifiers & NSEventModifierFlagCapsLock)
+        webModifiers.add(WebEvent::Modifier::CapsLockKey);
+
+    return webModifiers;
+}
+
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)

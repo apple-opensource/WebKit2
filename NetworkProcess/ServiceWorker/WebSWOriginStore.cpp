@@ -61,13 +61,13 @@ void WebSWOriginStore::clearStore()
 void WebSWOriginStore::importComplete()
 {
     m_isImported = true;
-    for (auto* connection : m_webSWServerConnections)
-        connection->send(Messages::WebSWClientConnection::SetSWOriginTableIsImported());
+    for (auto& connection : m_webSWServerConnections)
+        connection.send(Messages::WebSWClientConnection::SetSWOriginTableIsImported());
 }
 
 void WebSWOriginStore::registerSWServerConnection(WebSWServerConnection& connection)
 {
-    m_webSWServerConnections.add(&connection);
+    m_webSWServerConnections.add(connection);
 
     if (!m_store.isEmpty())
         sendStoreHandle(connection);
@@ -78,7 +78,7 @@ void WebSWOriginStore::registerSWServerConnection(WebSWServerConnection& connect
 
 void WebSWOriginStore::unregisterSWServerConnection(WebSWServerConnection& connection)
 {
-    m_webSWServerConnections.remove(&connection);
+    m_webSWServerConnections.remove(connection);
 }
 
 void WebSWOriginStore::sendStoreHandle(WebSWServerConnection& connection)
@@ -87,13 +87,18 @@ void WebSWOriginStore::sendStoreHandle(WebSWServerConnection& connection)
     if (!m_store.createSharedMemoryHandle(handle))
         return;
 
-    connection.send(Messages::WebSWClientConnection::SetSWOriginTableSharedMemory(handle));
+#if OS(DARWIN) || OS(WINDOWS)
+    uint64_t dataSize = handle.size();
+#else
+    uint64_t dataSize = 0;
+#endif
+    connection.send(Messages::WebSWClientConnection::SetSWOriginTableSharedMemory(SharedMemory::IPCHandle { WTFMove(handle), dataSize }));
 }
 
 void WebSWOriginStore::didInvalidateSharedMemory()
 {
-    for (auto* connection : m_webSWServerConnections)
-        sendStoreHandle(*connection);
+    for (auto& connection : m_webSWServerConnections)
+        sendStoreHandle(connection);
 }
 
 } // namespace WebKit

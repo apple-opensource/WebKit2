@@ -64,32 +64,30 @@ static WeakPtr<NetworkProcess>& globalNetworkProcess()
     return networkProcess.get();
 }
 
-static WorkQueue& workQueue()
-{
-    static WorkQueue* workQueue;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        workQueue = &WorkQueue::create("com.apple.WebKit.SecItemShim").leakRef();
-
-    });
-
-    return *workQueue;
-}
-
 static Optional<SecItemResponseData> sendSecItemRequest(SecItemRequestData::Type requestType, CFDictionaryRef query, CFDictionaryRef attributesToMatch = 0)
 {
-    if (!globalNetworkProcess())
-        return WTF::nullopt;
-
     Optional<SecItemResponseData> response;
+
+    if (RunLoop::isMain()) {
+        if (!globalNetworkProcess()->parentProcessConnection()->sendSync(Messages::SecItemShimProxy::SecItemRequestSync(SecItemRequestData(requestType, query, attributesToMatch)), Messages::SecItemShimProxy::SecItemRequestSync::Reply(response), 0))
+            return WTF::nullopt;
+        return response;
+    }
 
     BinarySemaphore semaphore;
 
-    globalNetworkProcess()->parentProcessConnection()->sendWithReply(Messages::SecItemShimProxy::SecItemRequest(SecItemRequestData(requestType, query, attributesToMatch)), 0, workQueue(), [&response, &semaphore](auto reply) {
-        if (reply)
-            response = WTFMove(std::get<0>(*reply));
+    RunLoop::main().dispatch([&] {
+        if (!globalNetworkProcess()) {
+            semaphore.signal();
+            return;
+        }
 
-        semaphore.signal();
+        globalNetworkProcess()->parentProcessConnection()->sendWithAsyncReply(Messages::SecItemShimProxy::SecItemRequest(SecItemRequestData(requestType, query, attributesToMatch)), [&](auto reply) {
+            if (reply)
+                response = WTFMove(*reply);
+
+            semaphore.signal();
+        });
     });
 
     semaphore.wait();
@@ -145,7 +143,7 @@ void initializeSecItemShim(NetworkProcess& process)
 {
     globalNetworkProcess() = makeWeakPtr(process);
 
-#if PLATFORM(IOS_FAMILY)
+#if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && !CPU(X86_64))
     struct _CFNFrameworksStubs stubs = {
         .version = 0,
         .SecItem_stub_CopyMatching = webSecItemCopyMatching,
@@ -157,7 +155,7 @@ void initializeSecItemShim(NetworkProcess& process)
     _CFURLConnectionSetFrameworkStubs(&stubs);
 #endif
 
-#if PLATFORM(MAC)
+#if PLATFORM(MAC) && CPU(X86_64)
     const SecItemShimCallbacks callbacks = {
         webSecItemCopyMatching,
         webSecItemAdd,

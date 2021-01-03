@@ -26,16 +26,15 @@
 #pragma once
 
 #include <WebCore/FindOptions.h>
-#include <WebCore/GraphicsLayer.h>
+#include <WebCore/PlatformLayer.h>
 #include <WebCore/ScrollTypes.h>
-#include <WebCore/SecurityOrigin.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RetainPtr.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
 
 #if PLATFORM(COCOA)
-#include "LayerHostingContext.h"
 typedef struct objc_object* id;
 
 OBJC_CLASS NSDictionary;
@@ -53,12 +52,12 @@ class Decoder;
 
 namespace WebCore {
 class AffineTransform;
+class Element;
 class FloatPoint;
 class GraphicsContext;
 class IntPoint;
 class IntRect;
 class IntSize;
-class FloatPoint;
 class Scrollbar;
 class SharedBuffer;
 }
@@ -78,6 +77,8 @@ enum PluginType {
     PDFPluginType,
 };
 
+enum class LayerHostingMode : uint8_t;
+
 class Plugin : public ThreadSafeRefCounted<Plugin> {
 public:
     struct Parameters {
@@ -92,7 +93,7 @@ public:
 #endif
 
         void encode(IPC::Encoder&) const;
-        static bool decode(IPC::Decoder&, Parameters&);
+        static WARN_UNUSED_RETURN bool decode(IPC::Decoder&, Parameters&);
     };
 
     // Sets the active plug-in controller and initializes the plug-in.
@@ -113,8 +114,11 @@ public:
 
     PluginType type() const { return m_type; }
 
-private:
+    bool isPluginProxy() const { return m_type == PluginProxyType; }
+    bool isNetscapePlugin() const { return m_type == NetscapePluginType; }
+    bool isPDFPlugin() const { return m_type == PDFPluginType; }
 
+private:
     // Initializes the plug-in. If the plug-in fails to initialize this should return false.
     // This is only called by the other initialize overload so it can be made private.
     virtual bool initialize(const Parameters&) = 0;
@@ -318,7 +322,7 @@ private:
     
 } // namespace WebKit
 
-#define SPECIALIZE_TYPE_TRAITS_PLUGIN(ToValueTypeName, SpecificPluginType) \
+#define SPECIALIZE_TYPE_TRAITS_PLUGIN(ToValueTypeName, predicate) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
-static bool isType(const WebKit::Plugin& plugin) { return plugin.type() == WebKit::SpecificPluginType; } \
+static bool isType(const WebKit::Plugin& plugin) { return plugin.predicate; } \
 SPECIALIZE_TYPE_TRAITS_END()

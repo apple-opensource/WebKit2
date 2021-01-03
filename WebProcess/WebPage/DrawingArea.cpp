@@ -50,13 +50,13 @@ std::unique_ptr<DrawingArea> DrawingArea::create(WebPage& webPage, const WebPage
 #if PLATFORM(COCOA)
 #if !PLATFORM(IOS_FAMILY)
     case DrawingAreaTypeTiledCoreAnimation:
-        return std::make_unique<TiledCoreAnimationDrawingArea>(webPage, parameters);
+        return makeUnique<TiledCoreAnimationDrawingArea>(webPage, parameters);
 #endif
     case DrawingAreaTypeRemoteLayerTree:
-        return std::make_unique<RemoteLayerTreeDrawingArea>(webPage, parameters);
+        return makeUnique<RemoteLayerTreeDrawingArea>(webPage, parameters);
 #elif USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER)
     case DrawingAreaTypeCoordinatedGraphics:
-        return std::make_unique<DrawingAreaCoordinatedGraphics>(webPage, parameters);
+        return makeUnique<DrawingAreaCoordinatedGraphics>(webPage, parameters);
 #endif
     }
 
@@ -82,7 +82,7 @@ void DrawingArea::dispatchAfterEnsuringUpdatedScrollPosition(WTF::Function<void 
     function();
 }
 
-#if USE(REQUEST_ANIMATION_FRAME_DISPLAY_MONITOR) && !(PLATFORM(MAC) && ENABLE(WEBPROCESS_WINDOWSERVER_BLOCKING))
+#if !(PLATFORM(MAC) && ENABLE(WEBPROCESS_WINDOWSERVER_BLOCKING))
 RefPtr<WebCore::DisplayRefreshMonitor> DrawingArea::createDisplayRefreshMonitor(PlatformDisplayID)
 {
     return nullptr;

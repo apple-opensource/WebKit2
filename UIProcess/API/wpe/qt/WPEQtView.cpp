@@ -21,12 +21,14 @@
 #include "config.h"
 #include "WPEQtView.h"
 
+#include "WPEQtViewBackend.h"
 #include "WPEQtViewLoadRequest.h"
 #include "WPEQtViewLoadRequestPrivate.h"
 #include <QGuiApplication>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
 #include <QScreen>
+#include <QtGlobal>
 #include <QtPlatformHeaders/QEGLNativeContext>
 #include <qpa/qplatformnativeinterface.h>
 #include <wtf/glib/GUniquePtr.h>
@@ -150,7 +152,7 @@ void WPEQtView::notifyLoadChangedCallback(WebKitWebView*, WebKitLoadEvent event,
 
     if (statusSet) {
         WPEQtViewLoadRequestPrivate loadRequestPrivate(view->url(), loadStatus, "");
-        std::unique_ptr<WPEQtViewLoadRequest> loadRequest = std::make_unique<WPEQtViewLoadRequest>(loadRequestPrivate);
+        std::unique_ptr<WPEQtViewLoadRequest> loadRequest = makeUnique<WPEQtViewLoadRequest>(loadRequestPrivate);
         Q_EMIT view->loadingChanged(loadRequest.get());
     }
 }
@@ -166,7 +168,7 @@ void WPEQtView::notifyLoadFailedCallback(WebKitWebView*, WebKitLoadEvent, const 
         loadStatus = WPEQtView::LoadStatus::LoadFailedStatus;
 
     WPEQtViewLoadRequestPrivate loadRequestPrivate(QUrl(QString(failingURI)), loadStatus, error->message);
-    std::unique_ptr<WPEQtViewLoadRequest> loadRequest = std::make_unique<WPEQtViewLoadRequest>(loadRequestPrivate);
+    std::unique_ptr<WPEQtViewLoadRequest> loadRequest = makeUnique<WPEQtViewLoadRequest>(loadRequestPrivate);
     Q_EMIT view->loadingChanged(loadRequest.get());
 }
 
@@ -183,7 +185,12 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
     if (!textureId)
         return node;
 
-    textureNode->setTexture(window()->createTextureFromId(textureId, m_size.toSize(), QQuickWindow::TextureHasAlphaChannel));
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+    auto texture = window()->createTextureFromNativeObject(QQuickWindow::NativeObjectTexture, &textureId, 0, m_size.toSize(), QQuickWindow::TextureHasAlphaChannel);
+#else
+    auto texture = window()->createTextureFromId(textureId, m_size.toSize(), QQuickWindow::TextureHasAlphaChannel);
+#endif
+    textureNode->setTexture(texture);
     textureNode->setRect(boundingRect());
     return textureNode;
 }
@@ -380,6 +387,7 @@ void WPEQtView::loadHtml(const QString& html, const QUrl& baseUrl)
 }
 
 struct JavascriptCallbackData {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
     JavascriptCallbackData(QJSValue cb, QPointer<WPEQtView> obj)
         : callback(cb)
         , object(obj) { }
@@ -439,7 +447,7 @@ static void jsAsyncReadyCallback(GObject* object, GAsyncResult* result, gpointer
 */
 void WPEQtView::runJavaScript(const QString& script, const QJSValue& callback)
 {
-    std::unique_ptr<JavascriptCallbackData> data = std::make_unique<JavascriptCallbackData>(callback, QPointer<WPEQtView>(this));
+    std::unique_ptr<JavascriptCallbackData> data = makeUnique<JavascriptCallbackData>(callback, QPointer<WPEQtView>(this));
     webkit_web_view_run_javascript(m_webView.get(), script.toUtf8().constData(), nullptr, jsAsyncReadyCallback, data.release());
 }
 

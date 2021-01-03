@@ -23,15 +23,15 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "WKBundlePageBannerMac.h"
+#import "config.h"
+#import "WKBundlePageBannerMac.h"
 
 #if !PLATFORM(IOS_FAMILY)
 
-#include "APIClient.h"
-#include "PageBanner.h"
-#include "WKAPICast.h"
-#include "WKBundleAPICast.h"
+#import "APIClient.h"
+#import "PageBanner.h"
+#import "WKAPICast.h"
+#import "WKBundleAPICast.h"
 
 namespace API {
 template<> struct ClientTraits<WKBundlePageBannerClientBase> {
@@ -43,6 +43,7 @@ namespace WebKit {
 using namespace WebCore;
 
 class PageBannerClientImpl : API::Client<WKBundlePageBannerClientBase>, public PageBanner::Client {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit PageBannerClientImpl(WKBundlePageBannerClientBase* client)
     {
@@ -103,7 +104,7 @@ WKBundlePageBannerRef WKBundlePageBannerCreateBannerWithCALayer(CALayer *layer, 
     if (wkClient && wkClient->version)
         return 0;
 
-    auto clientImpl = std::make_unique<WebKit::PageBannerClientImpl>(wkClient);
+    auto clientImpl = makeUnique<WebKit::PageBannerClientImpl>(wkClient);
     return toAPI(&WebKit::PageBanner::create(layer, height, clientImpl.release()).leakRef());
 }
 

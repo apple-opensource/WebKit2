@@ -28,6 +28,7 @@
 #include "config.h"
 #include "WebProcessPool.h"
 
+#include "LegacyGlobalSettings.h"
 #include "WebMemoryPressureHandler.h"
 #include "WebProcessCreationParameters.h"
 #include <JavaScriptCore/RemoteInspectorServer.h>
@@ -41,7 +42,7 @@
 
 #if PLATFORM(WAYLAND)
 #if USE(WPE_RENDERER)
-#include <wpe/fdo-egl.h>
+#include "AcceleratedBackingStoreWayland.h"
 #else
 #include "WaylandCompositor.h"
 #endif
@@ -103,7 +104,7 @@ void WebProcessPool::platformInitialize()
 void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process, WebProcessCreationParameters& parameters)
 {
 #if PLATFORM(WPE)
-    parameters.isServiceWorkerProcess = process.isServiceWorkerProcess();
+    parameters.isServiceWorkerProcess = process.isRunningServiceWorkers();
 
     if (!parameters.isServiceWorkerProcess) {
         parameters.hostClientFileDescriptor = wpe_renderer_host_create_client();
@@ -115,17 +116,17 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
     if (WebCore::PlatformDisplay::sharedDisplay().type() == WebCore::PlatformDisplay::Type::Wayland) {
 #if USE(WPE_RENDERER)
         wpe_loader_init("libWPEBackend-fdo-1.0.so");
-        if (wpe_fdo_initialize_for_egl_display(WebCore::PlatformDisplay::sharedDisplay().eglDisplay())) {
+        if (AcceleratedBackingStoreWayland::checkRequirements()) {
             parameters.hostClientFileDescriptor = wpe_renderer_host_create_client();
             parameters.implementationLibraryName = FileSystem::fileSystemRepresentation(wpe_loader_get_loaded_implementation_library_name());
         }
-#else
+#elif USE(EGL)
         parameters.waylandCompositorDisplayName = WaylandCompositor::singleton().displayName();
 #endif
     }
 #endif
 
-    parameters.memoryCacheDisabled = m_memoryCacheDisabled || cacheModel() == CacheModel::DocumentViewer;
+    parameters.memoryCacheDisabled = m_memoryCacheDisabled || LegacyGlobalSettings::singleton().cacheModel() == CacheModel::DocumentViewer;
     parameters.proxySettings = m_networkProxySettings;
 
     if (memoryPressureMonitorDisabled())
@@ -133,6 +134,10 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
 
 #if USE(GSTREAMER)
     parameters.gstreamerOptions = WebCore::extractGStreamerOptionsFromCommandLine();
+#endif
+
+#if PLATFORM(GTK) && !USE(GTK4)
+    parameters.useSystemAppearanceForScrollbars = m_configuration->useSystemAppearanceForScrollbars();
 #endif
 }
 

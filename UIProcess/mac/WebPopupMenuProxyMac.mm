@@ -28,12 +28,15 @@
 
 #if USE(APPKIT)
 
+#import "CoreTextHelpers.h"
 #import "NativeWebMouseEvent.h"
 #import "PageClientImplMac.h"
 #import "PlatformPopupMenuData.h"
 #import "StringUtilities.h"
 #import "WebPopupItem.h"
+#import <pal/spi/mac/NSCellSPI.h>
 #import <pal/system/mac/PopupMenu.h>
+#import <wtf/BlockObjCExceptions.h>
 #import <wtf/ProcessPrivilege.h>
 
 namespace WebKit {
@@ -65,7 +68,7 @@ void WebPopupMenuProxyMac::populate(const Vector<WebPopupItem>& items, NSFont *f
     int size = items.size();
 
     for (int i = 0; i < size; i++) {
-        if (items[i].m_type == WebPopupItem::Separator)
+        if (items[i].m_type == WebPopupItem::Type::Separator)
             [[m_popup menu] addItem:[NSMenuItem separatorItem]];
         else {
             [m_popup addItemWithTitle:@""];
@@ -100,11 +103,15 @@ void WebPopupMenuProxyMac::showPopupMenu(const IntRect& rect, TextDirection text
 {
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanCommunicateWithWindowServer));
     NSFont *font;
-    if (data.fontInfo.fontAttributeDictionary) {
-        NSFontDescriptor *fontDescriptor = [NSFontDescriptor fontDescriptorWithFontAttributes:(__bridge NSDictionary *)data.fontInfo.fontAttributeDictionary.get()];
-        font = [NSFont fontWithDescriptor:fontDescriptor size:((pageScaleFactor != 1) ? [fontDescriptor pointSize] * pageScaleFactor : 0)];
-    } else
+
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
+
+    if (NSDictionary *fontAttributes = static_cast<NSDictionary *>(data.fontInfo.fontAttributeDictionary.get()))
+        font = fontWithAttributes(fontAttributes, ((pageScaleFactor != 1) ? [fontAttributes[NSFontSizeAttribute] floatValue] * pageScaleFactor : 0));
+    else
         font = [NSFont menuFontOfSize:0];
+    
+    END_BLOCK_OBJC_EXCEPTIONS
 
     populate(items, font, textDirection);
 
@@ -154,6 +161,11 @@ void WebPopupMenuProxyMac::showPopupMenu(const IntRect& rect, TextDirection text
     case WebCore::PopupMenuStyle::PopupMenuSizeMini:
         controlSize = NSControlSizeMini;
         break;
+#if HAVE(LARGE_CONTROL_SIZE)
+    case PopupMenuStyle::PopupMenuSizeLarge:
+        controlSize = NSControlSizeLarge;
+        break;
+#endif
     }
 
     Ref<WebPopupMenuProxyMac> protect(*this);

@@ -30,7 +30,6 @@
 
 #import "NetworkCache.h"
 #import "NetworkProcessCreationParameters.h"
-#import "ResourceCachesToClear.h"
 #import "SandboxInitializationParameters.h"
 #import "SecItemShim.h"
 #import <WebCore/CertificateInfo.h>
@@ -38,8 +37,6 @@
 #import <WebCore/WebCoreThreadSystemInterface.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/cocoa/Entitlements.h>
-
-#define ENABLE_MANUAL_NETWORK_SANDBOXING 0
 
 namespace WebKit {
 using namespace WebCore;
@@ -54,32 +51,13 @@ void NetworkProcess::initializeProcessName(const AuxiliaryProcessInitializationP
     notImplemented();
 }
 
-void NetworkProcess::initializeSandbox(const AuxiliaryProcessInitializationParameters& parameters, SandboxInitializationParameters& sandboxParameters)
+void NetworkProcess::initializeSandbox(const AuxiliaryProcessInitializationParameters&, SandboxInitializationParameters&)
 {
-#if ENABLE_MANUAL_NETWORK_SANDBOXING
-    // Need to override the default, because service has a different bundle ID.
-    NSBundle *webkit2Bundle = [NSBundle bundleForClass:NSClassFromString(@"WKWebView")];
-    sandboxParameters.setOverrideSandboxProfilePath([webkit2Bundle pathForResource:@"com.apple.WebKit.NetworkProcess" ofType:@"sb"]);
-
-    AuxiliaryProcess::initializeSandbox(parameters, sandboxParameters);
-#else
-    UNUSED_PARAM(parameters);
-    UNUSED_PARAM(sandboxParameters);
-#endif
 }
 
 void NetworkProcess::allowSpecificHTTPSCertificateForHost(const CertificateInfo& certificateInfo, const String& host)
 {
     [NSURLRequest setAllowsSpecificHTTPSCertificate:(NSArray *)certificateInfo.certificateChain() forHost:host];
-}
-
-void NetworkProcess::clearCacheForAllOrigins(uint32_t cachesToClear)
-{
-    ResourceCachesToClear resourceCachesToClear = static_cast<ResourceCachesToClear>(cachesToClear);
-    if (resourceCachesToClear == InMemoryResourceCachesOnly)
-        return;
-    if (m_cache)
-        m_cache->clear();
 }
 
 void NetworkProcess::platformInitializeNetworkProcess(const NetworkProcessCreationParameters& parameters)
@@ -96,10 +74,26 @@ void NetworkProcess::platformTerminate()
     notImplemented();
 }
 
+static bool disableServiceWorkerEntitlementTestingOverride;
+
 bool NetworkProcess::parentProcessHasServiceWorkerEntitlement() const
 {
-    static bool hasEntitlement = WTF::hasEntitlement(parentProcessConnection()->xpcConnection(), "com.apple.developer.WebKit.ServiceWorkers");
+    if (disableServiceWorkerEntitlementTestingOverride)
+        return false;
+
+    static bool hasEntitlement = WTF::hasEntitlement(parentProcessConnection()->xpcConnection(), "com.apple.developer.WebKit.ServiceWorkers") || WTF::hasEntitlement(parentProcessConnection()->xpcConnection(), "com.apple.developer.web-browser");
     return hasEntitlement;
+}
+
+void NetworkProcess::disableServiceWorkerEntitlement()
+{
+    disableServiceWorkerEntitlementTestingOverride = true;
+}
+
+void NetworkProcess::clearServiceWorkerEntitlementOverride(CompletionHandler<void()>&& completionHandler)
+{
+    disableServiceWorkerEntitlementTestingOverride = false;
+    completionHandler();
 }
 
 } // namespace WebKit

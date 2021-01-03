@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010, 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef ShareableBitmap_h
-#define ShareableBitmap_h
+#pragma once
 
 #include "SharedMemory.h"
 #include <WebCore/IntRect.h>
@@ -38,6 +37,16 @@
 
 #if USE(CAIRO)
 #include <WebCore/RefPtrCairo.h>
+#endif
+
+#if USE(DIRECT2D)
+interface ID2D1Bitmap;
+interface ID2D1RenderTarget;
+interface ID3D11Device1;
+interface IDXGIKeyedMutex;
+interface IDXGISurface1;
+
+#include <WebCore/COMPtr.h>
 #endif
 
 namespace WebCore {
@@ -54,9 +63,12 @@ public:
 #if PLATFORM(COCOA)
         ColorSpaceData colorSpace;
 #endif
+#if USE(DIRECT2D)
+        mutable HANDLE sharedResourceHandle { nullptr };
+#endif
 
         void encode(IPC::Encoder&) const;
-        static bool decode(IPC::Decoder&, Configuration&);
+        static WARN_UNUSED_RETURN bool decode(IPC::Decoder&, Configuration&);
     };
 
     class Handle {
@@ -71,7 +83,7 @@ public:
         void clear();
 
         void encode(IPC::Encoder&) const;
-        static bool decode(IPC::Decoder&, Handle&);
+        static WARN_UNUSED_RETURN bool decode(IPC::Decoder&, Handle&);
 
     private:
         friend class ShareableBitmap;
@@ -125,6 +137,12 @@ public:
     // This creates a BitmapImage that directly references the shared bitmap data.
     // This is only safe to use when we know that the contents of the shareable bitmap won't change.
     RefPtr<cairo_surface_t> createCairoSurface();
+#elif USE(DIRECT2D)
+    COMPtr<ID2D1Bitmap> createDirect2DSurface(ID3D11Device1*, ID2D1RenderTarget*);
+    IDXGISurface1* dxSurface() { return m_surface.get(); }
+    void createSharedResource();
+    void disposeSharedResource();
+    void leakSharedResource();
 #endif
 
 private:
@@ -145,19 +163,26 @@ private:
     static void releaseSurfaceData(void* typelessBitmap);
 #endif
 
+public:
     void* data() const;
+private:
     size_t sizeInBytes() const { return numBytesForSize(m_size, m_configuration).unsafeGet(); }
 
     WebCore::IntSize m_size;
     Configuration m_configuration;
 
+#if USE(DIRECT2D)
+    COMPtr<IDXGISurface1> m_surface;
+    COMPtr<IDXGIKeyedMutex> m_surfaceMutex;
+    COMPtr<ID2D1Bitmap> m_bitmap;
+#endif
+
     // If the shareable bitmap is backed by shared memory, this points to the shared memory object.
     RefPtr<SharedMemory> m_sharedMemory;
 
     // If the shareable bitmap is backed by fastMalloced memory, this points to the data.
-    void* m_data;
+    void* m_data { nullptr };
 };
 
 } // namespace WebKit
 
-#endif // ShareableBitmap_h

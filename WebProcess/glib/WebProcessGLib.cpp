@@ -27,6 +27,8 @@
 #include "config.h"
 #include "WebProcess.h"
 
+#include "WebKitExtensionManager.h"
+#include "WebKitWebExtensionPrivate.h"
 #include "WebProcessCreationParameters.h"
 
 #if USE(GSTREAMER)
@@ -42,6 +44,10 @@
 #if USE(WPE_RENDERER)
 #include <WebCore/PlatformDisplayLibWPE.h>
 #include <wpe/wpe.h>
+#endif
+
+#if PLATFORM(GTK) && !USE(GTK4)
+#include <WebCore/ScrollbarThemeGtk.h>
 #endif
 
 namespace WebKit {
@@ -74,7 +80,8 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
             if (hostClientFileDescriptor != -1) {
                 wpe_loader_init(parameters.implementationLibraryName.data());
                 m_wpeDisplay = WebCore::PlatformDisplayLibWPE::create();
-                m_wpeDisplay->initialize(hostClientFileDescriptor);
+                if (!m_wpeDisplay->initialize(hostClientFileDescriptor))
+                    m_wpeDisplay = nullptr;
             }
         }
 #else
@@ -86,6 +93,10 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 #if USE(GSTREAMER)
     WebCore::initializeGStreamer(WTFMove(parameters.gstreamerOptions));
 #endif
+
+#if PLATFORM(GTK) && !USE(GTK4)
+    setUseSystemAppearanceForScrollbars(parameters.useSystemAppearanceForScrollbars);
+#endif
 }
 
 void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParameters&&)
@@ -95,5 +106,18 @@ void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParame
 void WebProcess::platformTerminate()
 {
 }
+
+void WebProcess::sendMessageToWebExtension(UserMessage&& message)
+{
+    if (auto* extension = WebKitExtensionManager::singleton().extension())
+        webkitWebExtensionDidReceiveUserMessage(extension, WTFMove(message));
+}
+
+#if PLATFORM(GTK) && !USE(GTK4)
+void WebProcess::setUseSystemAppearanceForScrollbars(bool useSystemAppearanceForScrollbars)
+{
+    static_cast<ScrollbarThemeGtk&>(ScrollbarTheme::theme()).setUseSystemAppearance(useSystemAppearanceForScrollbars);
+}
+#endif
 
 } // namespace WebKit

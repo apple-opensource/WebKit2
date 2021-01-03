@@ -51,18 +51,15 @@ const int cornerRadius = 3;
 const int totalHorizontalMargin = 1;
 const int totalVerticalMargin = 1;
 
-const TextIndicatorOptions findTextIndicatorOptions = TextIndicatorOptionIncludeMarginIfRangeMatchesSelection | TextIndicatorOptionDoNotClipToVisibleRect;
+constexpr OptionSet<TextIndicatorOption> findTextIndicatorOptions { TextIndicatorOption::IncludeMarginIfRangeMatchesSelection, TextIndicatorOption::DoNotClipToVisibleRect };
 
-static Color highlightColor()
-{
-    return Color(255, 228, 56, 255);
-}
+static constexpr auto highlightColor = SRGBA<uint8_t> { 255, 228, 56 };
 
 void FindIndicatorOverlayClientIOS::drawRect(PageOverlay& overlay, GraphicsContext& context, const IntRect& dirtyRect)
 {
     float scaleFactor = m_frame.page()->deviceScaleFactor();
 
-    if (m_frame.settings().delegatesPageScaling())
+    if (m_frame.page()->delegatesScaling())
         scaleFactor *= m_frame.page()->pageScaleFactor();
 
     // If the page scale changed, we need to paint a new TextIndicator.
@@ -79,7 +76,7 @@ void FindIndicatorOverlayClientIOS::drawRect(PageOverlay& overlay, GraphicsConte
     Vector<FloatRect> textRectsInBoundingRectCoordinates = m_textIndicator->textRectsInBoundingRectCoordinates();
     Vector<Path> paths = PathUtilities::pathsWithShrinkWrappedRects(textRectsInBoundingRectCoordinates, cornerRadius);
 
-    context.setFillColor(highlightColor());
+    context.setFillColor(highlightColor);
     for (const auto& path : paths)
         context.fillPath(path);
 
@@ -98,7 +95,7 @@ bool FindController::updateFindIndicator(Frame& selectedFrame, bool isShowingOve
     if (!textIndicator)
         return false;
 
-    m_findIndicatorOverlayClient = std::make_unique<FindIndicatorOverlayClientIOS>(selectedFrame, textIndicator.get());
+    m_findIndicatorOverlayClient = makeUnique<FindIndicatorOverlayClientIOS>(selectedFrame, textIndicator.get());
     m_findIndicatorRect = enclosingIntRect(textIndicator->selectionRectInRootViewCoordinates());
     m_findIndicatorOverlay = PageOverlay::create(*m_findIndicatorOverlayClient, PageOverlay::OverlayType::Document);
     m_webPage->corePage()->pageOverlayController().installPageOverlay(*m_findIndicatorOverlay, PageOverlay::FadeMode::DoNotFade);
@@ -128,8 +125,12 @@ void FindController::hideFindIndicator()
     m_webPage->corePage()->pageOverlayController().uninstallPageOverlay(*m_findIndicatorOverlay, PageOverlay::FadeMode::DoNotFade);
     m_findIndicatorOverlay = nullptr;
     m_isShowingFindIndicator = false;
-    m_foundStringMatchIndex = -1;
     didHideFindIndicator();
+}
+
+void FindController::resetMatchIndex()
+{
+    m_foundStringMatchIndex = -1;
 }
 
 static void setSelectionChangeUpdatesEnabledInAllFrames(WebPage& page, bool enabled)

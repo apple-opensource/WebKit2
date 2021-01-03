@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,9 +60,6 @@ void WebProcessCreationParameters::encode(IPC::Encoder& encoder) const
     encoder << webKitLoggingChannels;
 #if ENABLE(MEDIA_STREAM)
     encoder << audioCaptureExtensionHandle;
-    encoder << shouldCaptureAudioInUIProcess;
-    encoder << shouldCaptureVideoInUIProcess;
-    encoder << shouldCaptureDisplayInUIProcess;
 #endif
     encoder << urlSchemesRegisteredAsEmptyDocument;
     encoder << urlSchemesRegisteredAsSecure;
@@ -74,22 +71,22 @@ void WebProcessCreationParameters::encode(IPC::Encoder& encoder) const
     encoder << urlSchemesRegisteredAsCORSEnabled;
     encoder << urlSchemesRegisteredAsAlwaysRevalidated;
     encoder << urlSchemesRegisteredAsCachePartitioned;
-    encoder << urlSchemesServiceWorkersCanHandle;
     encoder << urlSchemesRegisteredAsCanDisplayOnlyIfCanRequest;
-    encoder.encodeEnum(cacheModel);
+    encoder << cacheModel;
     encoder << shouldAlwaysUseComplexTextCodePath;
     encoder << shouldEnableMemoryPressureReliefLogging;
     encoder << shouldSuppressMemoryPressureHandler;
     encoder << shouldUseFontSmoothing;
-    encoder << fontWhitelist;
+    encoder << fontAllowList;
     encoder << terminationTimeout;
-    encoder << languages;
+    encoder << overrideLanguages;
 #if USE(GSTREAMER)
     encoder << gstreamerOptions;
 #endif
     encoder << textCheckerState;
     encoder << fullKeyboardAccessEnabled;
     encoder << defaultRequestTimeoutInterval;
+    encoder << backForwardCacheCapacity;
 #if PLATFORM(COCOA)
     encoder << uiProcessBundleIdentifier;
     encoder << uiProcessSDKVersion;
@@ -111,7 +108,6 @@ void WebProcessCreationParameters::encode(IPC::Encoder& encoder) const
     encoder << notificationPermissions;
 #endif
 
-    encoder << plugInAutoStartOriginHashes;
     encoder << plugInAutoStartOrigins;
     encoder << memoryCacheDisabled;
     encoder << attrStyleEnabled;
@@ -144,10 +140,10 @@ void WebProcessCreationParameters::encode(IPC::Encoder& encoder) const
 
 #if PLATFORM(COCOA)
     encoder << mediaMIMETypes;
+    encoder << screenProperties;
 #endif
 
 #if PLATFORM(MAC)
-    encoder << screenProperties;
     encoder << useOverlayScrollbars;
 #endif
 
@@ -155,6 +151,50 @@ void WebProcessCreationParameters::encode(IPC::Encoder& encoder) const
     encoder << isServiceWorkerProcess;
     encoder << hostClientFileDescriptor;
     encoder << implementationLibraryName;
+#endif
+
+    encoder << websiteDataStoreParameters;
+    
+#if PLATFORM(IOS)
+    encoder << compilerServiceExtensionHandles;
+#endif
+
+    encoder << containerManagerExtensionHandle;
+    encoder << mobileGestaltExtensionHandle;
+
+#if PLATFORM(IOS_FAMILY)
+    encoder << diagnosticsExtensionHandles;
+    encoder << dynamicMachExtensionHandles;
+    encoder << dynamicIOKitExtensionHandles;
+#endif
+
+#if PLATFORM(COCOA)
+    encoder << systemHasBattery;
+    encoder << systemHasAC;
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+    encoder << currentUserInterfaceIdiomIsPad;
+    encoder << supportsPictureInPicture;
+    encoder << cssValueToSystemColorMap;
+    encoder << focusRingColor;
+    encoder << localizedDeviceModel;
+#endif
+
+#if PLATFORM(COCOA)
+    // FIXME(207716): The following should be removed when the GPU process is complete.
+    encoder << mediaExtensionHandles;
+#if ENABLE(CFPREFS_DIRECT_MODE)
+    encoder << preferencesExtensionHandles;
+#endif
+#endif
+
+#if PLATFORM(GTK)
+    encoder << useSystemAppearanceForScrollbars;
+#endif
+
+#if HAVE(CATALYST_USER_INTERFACE_IDIOM_AND_SCALE_FACTOR)
+    encoder << overrideUserInterfaceIdiomAndScale;
 #endif
 }
 
@@ -210,13 +250,6 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
     if (!audioCaptureExtensionHandle)
         return false;
     parameters.audioCaptureExtensionHandle = WTFMove(*audioCaptureExtensionHandle);
-
-    if (!decoder.decode(parameters.shouldCaptureAudioInUIProcess))
-        return false;
-    if (!decoder.decode(parameters.shouldCaptureVideoInUIProcess))
-        return false;
-    if (!decoder.decode(parameters.shouldCaptureDisplayInUIProcess))
-        return false;
 #endif
     if (!decoder.decode(parameters.urlSchemesRegisteredAsEmptyDocument))
         return false;
@@ -238,11 +271,9 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
         return false;
     if (!decoder.decode(parameters.urlSchemesRegisteredAsCachePartitioned))
         return false;
-    if (!decoder.decode(parameters.urlSchemesServiceWorkersCanHandle))
-        return false;
     if (!decoder.decode(parameters.urlSchemesRegisteredAsCanDisplayOnlyIfCanRequest))
         return false;
-    if (!decoder.decodeEnum(parameters.cacheModel))
+    if (!decoder.decode(parameters.cacheModel))
         return false;
     if (!decoder.decode(parameters.shouldAlwaysUseComplexTextCodePath))
         return false;
@@ -252,11 +283,11 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
         return false;
     if (!decoder.decode(parameters.shouldUseFontSmoothing))
         return false;
-    if (!decoder.decode(parameters.fontWhitelist))
+    if (!decoder.decode(parameters.fontAllowList))
         return false;
     if (!decoder.decode(parameters.terminationTimeout))
         return false;
-    if (!decoder.decode(parameters.languages))
+    if (!decoder.decode(parameters.overrideLanguages))
         return false;
 #if USE(GSTREAMER)
     if (!decoder.decode(parameters.gstreamerOptions))
@@ -267,6 +298,8 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
     if (!decoder.decode(parameters.fullKeyboardAccessEnabled))
         return false;
     if (!decoder.decode(parameters.defaultRequestTimeoutInterval))
+        return false;
+    if (!decoder.decode(parameters.backForwardCacheCapacity))
         return false;
 #if PLATFORM(COCOA)
     if (!decoder.decode(parameters.uiProcessBundleIdentifier))
@@ -313,8 +346,6 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
         return false;
 #endif
 
-    if (!decoder.decode(parameters.plugInAutoStartOriginHashes))
-        return false;
     if (!decoder.decode(parameters.plugInAutoStartOrigins))
         return false;
     if (!decoder.decode(parameters.memoryCacheDisabled))
@@ -359,14 +390,15 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
 #if PLATFORM(COCOA)
     if (!decoder.decode(parameters.mediaMIMETypes))
         return false;
-#endif
 
-#if PLATFORM(MAC)
     Optional<WebCore::ScreenProperties> screenProperties;
     decoder >> screenProperties;
     if (!screenProperties)
         return false;
     parameters.screenProperties = WTFMove(*screenProperties);
+#endif
+
+#if PLATFORM(MAC)
     if (!decoder.decode(parameters.useOverlayScrollbars))
         return false;
 #endif
@@ -378,6 +410,123 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
         return false;
     if (!decoder.decode(parameters.implementationLibraryName))
         return false;
+#endif
+
+    Optional<Optional<WebProcessDataStoreParameters>> websiteDataStoreParameters;
+    decoder >> websiteDataStoreParameters;
+    if (!websiteDataStoreParameters)
+        return false;
+    parameters.websiteDataStoreParameters = WTFMove(*websiteDataStoreParameters);
+
+#if PLATFORM(IOS)
+    Optional<SandboxExtension::HandleArray> compilerServiceExtensionHandles;
+    decoder >> compilerServiceExtensionHandles;
+    if (!compilerServiceExtensionHandles)
+        return false;
+    parameters.compilerServiceExtensionHandles = WTFMove(*compilerServiceExtensionHandles);
+#endif
+
+    Optional<Optional<SandboxExtension::Handle>> containerManagerExtensionHandle;
+    decoder >> containerManagerExtensionHandle;
+    if (!containerManagerExtensionHandle)
+        return false;
+    parameters.containerManagerExtensionHandle = WTFMove(*containerManagerExtensionHandle);
+
+    Optional<Optional<SandboxExtension::Handle>> mobileGestaltExtensionHandle;
+    decoder >> mobileGestaltExtensionHandle;
+    if (!mobileGestaltExtensionHandle)
+        return false;
+    parameters.mobileGestaltExtensionHandle = WTFMove(*mobileGestaltExtensionHandle);
+
+#if PLATFORM(IOS_FAMILY)
+    Optional<SandboxExtension::HandleArray> diagnosticsExtensionHandles;
+    decoder >> diagnosticsExtensionHandles;
+    if (!diagnosticsExtensionHandles)
+        return false;
+    parameters.diagnosticsExtensionHandles = WTFMove(*diagnosticsExtensionHandles);
+
+    Optional<SandboxExtension::HandleArray> dynamicMachExtensionHandles;
+    decoder >> dynamicMachExtensionHandles;
+    if (!dynamicMachExtensionHandles)
+        return false;
+    parameters.dynamicMachExtensionHandles = WTFMove(*dynamicMachExtensionHandles);
+
+    Optional<SandboxExtension::HandleArray> dynamicIOKitExtensionHandles;
+    decoder >> dynamicIOKitExtensionHandles;
+    if (!dynamicIOKitExtensionHandles)
+        return false;
+    parameters.dynamicIOKitExtensionHandles = WTFMove(*dynamicIOKitExtensionHandles);
+#endif
+
+#if PLATFORM(COCOA)
+    Optional<bool> systemHasBattery;
+    decoder >> systemHasBattery;
+    if (!systemHasBattery)
+        return false;
+    parameters.systemHasBattery = WTFMove(*systemHasBattery);
+
+    Optional<bool> systemHasAC;
+    decoder >> systemHasAC;
+    if (!systemHasAC)
+        return false;
+    parameters.systemHasAC = WTFMove(*systemHasAC);
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+    if (!decoder.decode(parameters.currentUserInterfaceIdiomIsPad))
+        return false;
+
+    if (!decoder.decode(parameters.supportsPictureInPicture))
+        return false;
+
+    Optional<WebCore::RenderThemeIOS::CSSValueToSystemColorMap> cssValueToSystemColorMap;
+    decoder >> cssValueToSystemColorMap;
+    if (!cssValueToSystemColorMap)
+        return false;
+    parameters.cssValueToSystemColorMap = WTFMove(*cssValueToSystemColorMap);
+
+    Optional<WebCore::Color> focusRingColor;
+    decoder >> focusRingColor;
+    if (!focusRingColor)
+        return false;
+    parameters.focusRingColor = WTFMove(*focusRingColor);
+    
+    if (!decoder.decode(parameters.localizedDeviceModel))
+        return false;
+#endif
+
+#if PLATFORM(COCOA)
+    // FIXME(207716): The following should be removed when the GPU process is complete.
+    Optional<SandboxExtension::HandleArray> mediaExtensionHandles;
+    decoder >> mediaExtensionHandles;
+    if (!mediaExtensionHandles)
+        return false;
+    parameters.mediaExtensionHandles = WTFMove(*mediaExtensionHandles);
+    // FIXME(207716): End region to remove.
+
+#if ENABLE(CFPREFS_DIRECT_MODE)
+    Optional<Optional<SandboxExtension::HandleArray>> preferencesExtensionHandles;
+    decoder >> preferencesExtensionHandles;
+    if (!preferencesExtensionHandles)
+        return false;
+    parameters.preferencesExtensionHandles = WTFMove(*preferencesExtensionHandles);
+#endif
+#endif
+
+#if PLATFORM(GTK)
+    Optional<bool> useSystemAppearanceForScrollbars;
+    decoder >> useSystemAppearanceForScrollbars;
+    if (!useSystemAppearanceForScrollbars)
+        return false;
+    parameters.useSystemAppearanceForScrollbars = WTFMove(*useSystemAppearanceForScrollbars);
+#endif
+
+#if HAVE(CATALYST_USER_INTERFACE_IDIOM_AND_SCALE_FACTOR)
+    Optional<std::pair<int64_t, double>> overrideUserInterfaceIdiomAndScale;
+    decoder >> overrideUserInterfaceIdiomAndScale;
+    if (!overrideUserInterfaceIdiomAndScale)
+        return false;
+    parameters.overrideUserInterfaceIdiomAndScale = WTFMove(*overrideUserInterfaceIdiomAndScale);
 #endif
 
     return true;

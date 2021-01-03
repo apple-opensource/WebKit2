@@ -205,14 +205,14 @@ void WebProcessConnection::destroyPlugin(uint64_t pluginInstanceID, bool asynchr
     destroyPluginControllerProxy(pluginControllerProxy);
 }
 
-void WebProcessConnection::didReceiveInvalidMessage(IPC::Connection&, IPC::StringReference, IPC::StringReference)
+void WebProcessConnection::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName)
 {
     // FIXME: Implement.
 }
 
 void WebProcessConnection::createPluginInternal(const PluginCreationParameters& creationParameters, bool& result, bool& wantsWheelEvents, uint32_t& remoteLayerClientID)
 {
-    auto pluginControllerProxy = std::make_unique<PluginControllerProxy>(this, creationParameters);
+    auto pluginControllerProxy = makeUnique<PluginControllerProxy>(this, creationParameters);
 
     PluginControllerProxy* pluginControllerProxyPtr = pluginControllerProxy.get();
 

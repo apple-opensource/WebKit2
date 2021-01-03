@@ -23,11 +23,11 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "RemoteObjectInvocation.h"
+#import "config.h"
+#import "RemoteObjectInvocation.h"
 
-#include "ArgumentCoders.h"
-#include "UserData.h"
+#import "ArgumentCoders.h"
+#import "UserData.h"
 
 namespace WebKit {
 
@@ -83,7 +83,7 @@ bool RemoteObjectInvocation::decode(IPC::Decoder& decoder, RemoteObjectInvocatio
         if (!decoder.decode(blockSignature))
             return false;
 
-        result.m_replyInfo = std::make_unique<ReplyInfo>(replyID, WTFMove(blockSignature));
+        result.m_replyInfo = makeUnique<ReplyInfo>(replyID, WTFMove(blockSignature));
     }
 
     return true;

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "LegacyCustomProtocolID.h"
 #include "MessageReceiver.h"
 #include "NetworkProcessSupplement.h"
 #include <wtf/HashMap.h>
@@ -36,15 +37,6 @@
 #include <wtf/RetainPtr.h>
 OBJC_CLASS NSURLSessionConfiguration;
 OBJC_CLASS WKCustomProtocol;
-#endif
-
-#if USE(SOUP)
-#include <wtf/glib/GRefPtr.h>
-
-typedef struct _GCancellable GCancellable;
-typedef struct _GInputStream GInputStream;
-typedef struct _GTask GTask;
-typedef struct _WebKitSoupRequestGeneric WebKitSoupRequestGeneric;
 #endif
 
 namespace IPC {
@@ -63,6 +55,7 @@ class NetworkProcess;
 struct NetworkProcessCreationParameters;
 
 class LegacyCustomProtocolManager : public NetworkProcessSupplement, public IPC::MessageReceiver {
+    WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(LegacyCustomProtocolManager);
 public:
     explicit LegacyCustomProtocolManager(NetworkProcess&);
@@ -76,28 +69,14 @@ public:
 #if PLATFORM(COCOA)
     typedef RetainPtr<WKCustomProtocol> CustomProtocol;
 #endif
-#if USE(SOUP)
-    struct WebSoupRequestAsyncData {
-        WebSoupRequestAsyncData(GRefPtr<GTask>&&, WebKitSoupRequestGeneric*);
-        ~WebSoupRequestAsyncData();
 
-        GRefPtr<GTask> task;
-        WebKitSoupRequestGeneric* request;
-        GRefPtr<GCancellable> cancellable;
-        GRefPtr<GInputStream> stream;
-    };
-    typedef std::unique_ptr<WebSoupRequestAsyncData> CustomProtocol;
-#endif
-
-    uint64_t addCustomProtocol(CustomProtocol&&);
-    void removeCustomProtocol(uint64_t customProtocolID);
-    void startLoading(uint64_t customProtocolID, const WebCore::ResourceRequest&);
-    void stopLoading(uint64_t customProtocolID);
+    LegacyCustomProtocolID addCustomProtocol(CustomProtocol&&);
+    void removeCustomProtocol(LegacyCustomProtocolID);
+    void startLoading(LegacyCustomProtocolID, const WebCore::ResourceRequest&);
+    void stopLoading(LegacyCustomProtocolID);
 
 #if PLATFORM(COCOA)
     void registerProtocolClass(NSURLSessionConfiguration*);
-#endif
-#if PLATFORM(COCOA) || USE(SOUP)
     static void networkProcessCreated(NetworkProcess&);
 #endif
 
@@ -108,17 +87,17 @@ private:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    void didFailWithError(uint64_t customProtocolID, const WebCore::ResourceError&);
-    void didLoadData(uint64_t customProtocolID, const IPC::DataReference&);
-    void didReceiveResponse(uint64_t customProtocolID, const WebCore::ResourceResponse&, uint32_t cacheStoragePolicy);
-    void didFinishLoading(uint64_t customProtocolID);
-    void wasRedirectedToRequest(uint64_t customProtocolID, const WebCore::ResourceRequest&, const WebCore::ResourceResponse& redirectResponse);
+    void didFailWithError(LegacyCustomProtocolID, const WebCore::ResourceError&);
+    void didLoadData(LegacyCustomProtocolID, const IPC::DataReference&);
+    void didReceiveResponse(LegacyCustomProtocolID, const WebCore::ResourceResponse&, uint32_t cacheStoragePolicy);
+    void didFinishLoading(LegacyCustomProtocolID);
+    void wasRedirectedToRequest(LegacyCustomProtocolID, const WebCore::ResourceRequest&, const WebCore::ResourceResponse& redirectResponse);
 
     void registerProtocolClass();
 
     NetworkProcess& m_networkProcess;
 
-    typedef HashMap<uint64_t, CustomProtocol> CustomProtocolMap;
+    typedef HashMap<LegacyCustomProtocolID, CustomProtocol> CustomProtocolMap;
     CustomProtocolMap m_customProtocolMap;
     Lock m_customProtocolMapMutex;
 
@@ -128,11 +107,7 @@ private:
 
     // WKCustomProtocol objects can be removed from the m_customProtocolMap from multiple threads.
     // We return a RetainPtr here because it is unsafe to return a raw pointer since the object might immediately be destroyed from a different thread.
-    RetainPtr<WKCustomProtocol> protocolForID(uint64_t customProtocolID);
-#endif
-
-#if USE(SOUP)
-    GRefPtr<GPtrArray> m_registeredSchemes;
+    RetainPtr<WKCustomProtocol> protocolForID(LegacyCustomProtocolID);
 #endif
 };
 

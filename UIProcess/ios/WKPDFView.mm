@@ -36,11 +36,12 @@
 #import "WKKeyboardScrollingAnimator.h"
 #import "WKUIDelegatePrivate.h"
 #import "WKWebEvent.h"
-#import "WKWebViewInternal.h"
+#import "WKWebViewIOS.h"
 #import "WebPageProxy.h"
 #import "_WKWebViewPrintFormatterInternal.h"
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <WebCore/DataDetection.h>
+#import <WebCore/ShareData.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/MainThread.h>
 #import <wtf/RetainPtr.h>
@@ -70,10 +71,16 @@
     RetainPtr<NSString> _suggestedFilename;
     WeakObjCPtr<WKWebView> _webView;
     RetainPtr<WKKeyboardScrollViewAnimator> _keyboardScrollingAnimator;
+    RetainPtr<WKShareSheet> _shareSheet;
 }
 
 - (void)dealloc
 {
+    if (_shareSheet) {
+        [_shareSheet setDelegate:nil];
+        [_shareSheet dismiss];
+        _shareSheet = nil;
+    }
     [_actionSheetAssistant cleanupSheet];
     [[_hostViewController view] removeFromSuperview];
     [_pageNumberIndicator removeFromSuperview];
@@ -113,11 +120,7 @@
     if (!(self = [super initWithFrame:frame webView:webView]))
         return nil;
 
-#if USE(PDFKIT_BACKGROUND_COLOR)
     UIColor *backgroundColor = PDFHostViewController.backgroundColor;
-#else
-    UIColor *backgroundColor = UIColor.grayColor;
-#endif
     self.backgroundColor = backgroundColor;
     webView.scrollView.backgroundColor = backgroundColor;
 
@@ -360,12 +363,8 @@ static NSStringCompareOptions stringCompareOptions(_WKFindOptions findOptions)
 
 + (BOOL)web_requiresCustomSnapshotting
 {
-#if HAVE(PDFHOSTVIEWCONTROLLER_SNAPSHOTTING)
     static bool hasGlobalCaptureEntitlement = WTF::processHasEntitlement("com.apple.QuartzCore.global-capture");
     return !hasGlobalCaptureEntitlement;
-#else
-    return false;
-#endif
 }
 
 - (void)web_scrollViewDidScroll:(UIScrollView *)scrollView
@@ -397,12 +396,10 @@ static NSStringCompareOptions stringCompareOptions(_WKFindOptions findOptions)
 
 - (void)web_snapshotRectInContentViewCoordinates:(CGRect)rectInContentViewCoordinates snapshotWidth:(CGFloat)snapshotWidth completionHandler:(void (^)(CGImageRef))completionHandler
 {
-#if HAVE(PDFHOSTVIEWCONTROLLER_SNAPSHOTTING)
     CGRect rectInHostViewCoordinates = [self._contentView convertRect:rectInContentViewCoordinates toView:[_hostViewController view]];
     [_hostViewController snapshotViewRect:rectInHostViewCoordinates snapshotWidth:@(snapshotWidth) afterScreenUpdates:NO withResult:^(UIImage *image) {
         completionHandler(image.CGImage);
     }];
-#endif
 }
 
 - (NSData *)web_dataRepresentation
@@ -488,12 +485,15 @@ static NSStringCompareOptions stringCompareOptions(_WKFindOptions findOptions)
     positionInformation.url = url;
 
     _positionInformation = WTFMove(positionInformation);
+
 #if ENABLE(DATA_DETECTION)
-    if (WebCore::DataDetection::canBePresentedByDataDetectors(_positionInformation.url))
-        [_actionSheetAssistant showDataDetectorsSheet];
-    else
+    if (WebCore::DataDetection::canBePresentedByDataDetectors(_positionInformation.url)) {
+        [_actionSheetAssistant showDataDetectorsUIForPositionInformation:positionInformation];
+        return;
+    }
 #endif
-        [_actionSheetAssistant showLinkSheet];
+
+    [_actionSheetAssistant showLinkSheet];
 }
 
 - (void)pdfHostViewController:(PDFHostViewController *)controller didLongPressURL:(NSURL *)url atLocation:(CGPoint)location withAnnotationRect:(CGRect)annotationRect
@@ -529,7 +529,7 @@ static NSStringCompareOptions stringCompareOptions(_WKFindOptions findOptions)
         return;
 
     NSDictionary *representations = @{
-        (NSString *)kUTTypeUTF8PlainText : (NSString *)_positionInformation.url,
+        (NSString *)kUTTypeUTF8PlainText : (NSString *)_positionInformation.url.string(),
         (NSString *)kUTTypeURL : (NSURL *)_positionInformation.url,
     };
 
@@ -543,9 +543,26 @@ static NSStringCompareOptions stringCompareOptions(_WKFindOptions findOptions)
 
 - (void)actionSheetAssistant:(WKActionSheetAssistant *)assistant shareElementWithURL:(NSURL *)url rect:(CGRect)boundingRect
 {
-    // FIXME: We should use WKShareSheet instead of UIWKSelectionAssistant for this.
-    auto selectionAssistant = adoptNS([[UIWKSelectionAssistant alloc] initWithView:[_hostViewController view]]);
-    [selectionAssistant showShareSheetFor:WTF::userVisibleString(url) fromRect:boundingRect];
+    WKWebView *webView = _webView.getAutoreleased();
+    if (!webView)
+        return;
+
+    WebCore::ShareDataWithParsedURL shareData;
+    shareData.url = { url };
+    
+    [_shareSheet dismiss];
+
+    _shareSheet = adoptNS([[WKShareSheet alloc] initWithView:webView]);
+    [_shareSheet setDelegate:self];
+    [_shareSheet presentWithParameters:shareData inRect: { [[_hostViewController view] convertRect:boundingRect toView:webView] } completionHandler:[] (bool success) { }];
+}
+
+- (void)shareSheetDidDismiss:(WKShareSheet *)shareSheet
+{
+    ASSERT(_shareSheet == shareSheet);
+    
+    [_shareSheet setDelegate:nil];
+    _shareSheet = nil;
 }
 
 #if HAVE(APP_LINKS)
@@ -568,7 +585,7 @@ static NSStringCompareOptions stringCompareOptions(_WKFindOptions findOptions)
     return page->uiClient().actionsForElement(element, WTFMove(defaultActions));
 }
 
-- (NSDictionary *)dataDetectionContextForActionSheetAssistant:(WKActionSheetAssistant *)assistant
+- (NSDictionary *)dataDetectionContextForActionSheetAssistant:(WKActionSheetAssistant *)assistant positionInformation:(const WebKit::InteractionInformationAtPosition&)positionInformation
 {
     auto webView = _webView.getAutoreleased();
     if (!webView)

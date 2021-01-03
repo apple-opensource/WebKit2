@@ -42,6 +42,7 @@ class MachSendRight;
 }
 
 namespace WebCore {
+class Element;
 class HTTPHeaderMap;
 class ProtectionSpace;
 class SharedBuffer;
@@ -308,6 +309,7 @@ private:
     Vector<bool, 8> m_popupEnabledStates;
 
     class Timer {
+        WTF_MAKE_FAST_ALLOCATED;
         WTF_MAKE_NONCOPYABLE(Timer);
 
     public:
@@ -376,6 +378,6 @@ private:
 
 } // namespace WebKit
 
-SPECIALIZE_TYPE_TRAITS_PLUGIN(NetscapePlugin, NetscapePluginType)
+SPECIALIZE_TYPE_TRAITS_PLUGIN(NetscapePlugin, isNetscapePlugin())
 
 #endif // ENABLE(NETSCAPE_PLUGIN_API)

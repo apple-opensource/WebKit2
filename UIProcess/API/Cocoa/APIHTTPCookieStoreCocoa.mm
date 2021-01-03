@@ -23,12 +23,17 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "APIHTTPCookieStore.h"
+#import "config.h"
+#import "APIHTTPCookieStore.h"
 
-#include <WebCore/Cookie.h>
-#include <WebCore/CookieStorageObserver.h>
-#include <pal/spi/cf/CFNetworkSPI.h>
+#import "WebsiteDataStore.h"
+#import <WebCore/Cookie.h>
+#import <WebCore/CookieStorageObserver.h>
+#import <WebCore/HTTPCookieAcceptPolicy.h>
+#import <WebCore/HTTPCookieAcceptPolicyCocoa.h>
+#import <pal/spi/cf/CFNetworkSPI.h>
+#import <wtf/BlockPtr.h>
+#import <wtf/RunLoop.h>
 
 namespace API {
 
@@ -60,7 +65,7 @@ void HTTPCookieStore::deleteCookieFromDefaultUIProcessCookieStore(const WebCore:
 void HTTPCookieStore::startObservingChangesToDefaultUIProcessCookieStore(Function<void()>&& function)
 {
     stopObservingChangesToDefaultUIProcessCookieStore();
-    m_defaultUIProcessObserver = std::make_unique<WebCore::CookieStorageObserver>([NSHTTPCookieStorage sharedHTTPCookieStorage]);
+    m_defaultUIProcessObserver = makeUnique<WebCore::CookieStorageObserver>([NSHTTPCookieStorage sharedHTTPCookieStorage]);
     m_defaultUIProcessObserver->startObserving(WTFMove(function));
 }
 
@@ -68,6 +73,16 @@ void HTTPCookieStore::stopObservingChangesToDefaultUIProcessCookieStore()
 {
     if (auto observer = std::exchange(m_defaultUIProcessObserver, nullptr))
         observer->stopObserving();
+}
+
+void HTTPCookieStore::deleteCookiesInDefaultUIProcessCookieStore()
+{
+    [[NSHTTPCookieStorage sharedHTTPCookieStorage] removeCookiesSinceDate:[NSDate distantPast]];
+}
+
+void HTTPCookieStore::setHTTPCookieAcceptPolicyInDefaultUIProcessCookieStore(WebCore::HTTPCookieAcceptPolicy policy)
+{
+    [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookieAcceptPolicy:toNSHTTPCookieAcceptPolicy(policy)];
 }
 
 } // namespace API

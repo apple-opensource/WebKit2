@@ -34,6 +34,7 @@
 #include <WebCore/SuddenTermination.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RefPtr.h>
+#include <wtf/RunLoop.h>
 #include <wtf/WorkQueue.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
@@ -55,16 +56,13 @@ LocalStorageDatabase::LocalStorageDatabase(Ref<WorkQueue>&& queue, Ref<LocalStor
     , m_tracker(WTFMove(tracker))
     , m_securityOrigin(securityOrigin)
     , m_databasePath(m_tracker->databasePath(m_securityOrigin))
-    , m_failedToOpenDatabase(false)
-    , m_didImportItems(false)
-    , m_isClosed(false)
-    , m_didScheduleDatabaseUpdate(false)
-    , m_shouldClearItems(false)
 {
+    ASSERT(!RunLoop::isMain());
 }
 
 LocalStorageDatabase::~LocalStorageDatabase()
 {
+    ASSERT(!RunLoop::isMain());
     ASSERT(m_isClosed);
 }
 
@@ -245,7 +243,7 @@ void LocalStorageDatabase::scheduleDatabaseUpdate()
         return;
 
     if (!m_disableSuddenTerminationWhileWritingToLocalStorage)
-        m_disableSuddenTerminationWhileWritingToLocalStorage = std::make_unique<SuddenTerminationDisabler>();
+        m_disableSuddenTerminationWhileWritingToLocalStorage = makeUnique<SuddenTerminationDisabler>();
 
     m_didScheduleDatabaseUpdate = true;
 
@@ -259,7 +257,6 @@ void LocalStorageDatabase::updateDatabase()
     if (m_isClosed)
         return;
 
-    ASSERT(m_didScheduleDatabaseUpdate);
     m_didScheduleDatabaseUpdate = false;
 
     HashMap<String, String> changedItems;

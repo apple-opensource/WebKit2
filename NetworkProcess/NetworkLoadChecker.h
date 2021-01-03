@@ -26,11 +26,13 @@
 #pragma once
 
 #include "UserContentControllerIdentifier.h"
+#include "WebPageProxyIdentifier.h"
 #include <WebCore/ContentExtensionActions.h>
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/FetchOptions.h>
 #include <WebCore/NetworkLoadInformation.h>
 #include <WebCore/ResourceError.h>
+#include <pal/SessionID.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Expected.h>
 #include <wtf/Variant.h>
@@ -48,13 +50,15 @@ namespace WebKit {
 
 class NetworkCORSPreflightChecker;
 class NetworkProcess;
+class NetworkResourceLoader;
+class NetworkSchemeRegistry;
 
 class NetworkLoadChecker : public CanMakeWeakPtr<NetworkLoadChecker> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     enum class LoadType : bool { MainFrame, Other };
 
-    NetworkLoadChecker(NetworkProcess&, WebCore::FetchOptions&&, PAL::SessionID, WebCore::PageIdentifier, uint64_t frameID, WebCore::HTTPHeaderMap&&, URL&&, RefPtr<WebCore::SecurityOrigin>&&, WebCore::PreflightPolicy, String&& referrer, bool isHTTPSUpgradeEnabled = false, bool shouldCaptureExtraNetworkLoadMetrics = false, LoadType requestLoadType = LoadType::Other);
+    NetworkLoadChecker(NetworkProcess&, NetworkResourceLoader*, NetworkSchemeRegistry*, WebCore::FetchOptions&&, PAL::SessionID, WebPageProxyIdentifier, WebCore::HTTPHeaderMap&&, URL&&, RefPtr<WebCore::SecurityOrigin>&&, RefPtr<WebCore::SecurityOrigin>&& topOrigin, WebCore::PreflightPolicy, String&& referrer, bool isHTTPSUpgradeEnabled = false, bool shouldCaptureExtraNetworkLoadMetrics = false, LoadType requestLoadType = LoadType::Other);
     ~NetworkLoadChecker();
 
     struct RedirectionTriplet {
@@ -71,7 +75,7 @@ public:
     using RedirectionValidationHandler = CompletionHandler<void(RedirectionRequestOrError&&)>;
     void checkRedirection(WebCore::ResourceRequest&& request, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&& redirectResponse, WebCore::ContentSecurityPolicyClient*, RedirectionValidationHandler&&);
 
-    WebCore::ResourceError validateResponse(WebCore::ResourceResponse&);
+    WebCore::ResourceError validateResponse(const WebCore::ResourceRequest&, WebCore::ResourceResponse&);
 
     void setCSPResponseHeaders(WebCore::ContentSecurityPolicyResponseHeaders&& headers) { m_cspResponseHeaders = WTFMove(headers); }
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -81,6 +85,8 @@ public:
         m_userContentControllerIdentifier = identifier;
     }
 #endif
+
+    NetworkProcess& networkProcess() { return m_networkProcess; }
 
     const URL& url() const { return m_url; }
     WebCore::StoredCredentialsPolicy storedCredentialsPolicy() const { return m_storedCredentialsPolicy; }
@@ -115,7 +121,7 @@ private:
         const WebCore::ContentRuleListResults& results;
     };
     using ContentExtensionResultOrError = Expected<ContentExtensionResult, WebCore::ResourceError>;
-    using ContentExtensionCallback = CompletionHandler<void(ContentExtensionResultOrError)>;
+    using ContentExtensionCallback = CompletionHandler<void(ContentExtensionResultOrError&&)>;
     void processContentRuleListsForLoad(WebCore::ResourceRequest&&, ContentExtensionCallback&&);
 #endif
 
@@ -125,12 +131,12 @@ private:
     WebCore::StoredCredentialsPolicy m_storedCredentialsPolicy;
     PAL::SessionID m_sessionID;
     Ref<NetworkProcess> m_networkProcess;
-    WebCore::PageIdentifier m_pageID;
-    uint64_t m_frameID;
+    WebPageProxyIdentifier m_webPageProxyID;
     WebCore::HTTPHeaderMap m_originalRequestHeaders; // Needed for CORS checks.
     WebCore::HTTPHeaderMap m_firstRequestHeaders; // Needed for CORS checks.
     URL m_url;
     RefPtr<WebCore::SecurityOrigin> m_origin;
+    RefPtr<WebCore::SecurityOrigin> m_topOrigin;
     Optional<WebCore::ContentSecurityPolicyResponseHeaders> m_cspResponseHeaders;
 #if ENABLE(CONTENT_EXTENSIONS)
     URL m_mainDocumentURL;
@@ -147,10 +153,16 @@ private:
     String m_referrer;
     bool m_checkContentExtensions { false };
     bool m_shouldCaptureExtraNetworkLoadMetrics { false };
+
+#if PLATFORM(COCOA)
     bool m_isHTTPSUpgradeEnabled { false };
+#endif
+
     WebCore::NetworkLoadInformation m_loadInformation;
 
     LoadType m_requestLoadType;
+    RefPtr<NetworkSchemeRegistry> m_schemeRegistry;
+    WeakPtr<NetworkResourceLoader> m_networkResourceLoader;
 };
 
 }

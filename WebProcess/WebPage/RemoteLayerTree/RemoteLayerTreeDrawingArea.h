@@ -29,6 +29,7 @@
 #include "DrawingArea.h"
 #include "GraphicsLayerCARemote.h"
 #include "RemoteLayerTreeTransaction.h"
+#include <WebCore/AnimationFrameRate.h>
 #include <WebCore/GraphicsLayerClient.h>
 #include <WebCore/Timer.h>
 #include <atomic>
@@ -51,8 +52,8 @@ public:
     RemoteLayerTreeDrawingArea(WebPage&, const WebPageCreationParameters&);
     virtual ~RemoteLayerTreeDrawingArea();
 
-    uint64_t nextTransactionID() const { return m_currentTransactionID + 1; }
-    uint64_t lastCommittedTransactionID() const { return m_currentTransactionID; }
+    TransactionID nextTransactionID() const { return m_currentTransactionID.next(); }
+    TransactionID lastCommittedTransactionID() const { return m_currentTransactionID; }
 
 private:
     // DrawingArea
@@ -60,42 +61,42 @@ private:
     void setNeedsDisplayInRect(const WebCore::IntRect&) override;
     void scroll(const WebCore::IntRect& scrollRect, const WebCore::IntSize& scrollDelta) override;
     void updateGeometry(const WebCore::IntSize& viewSize, bool flushSynchronously, const WTF::MachSendRight& fencePort) override;
+    void adoptDisplayRefreshMonitorsFromDrawingArea(DrawingArea&) override;
 
     WebCore::GraphicsLayerFactory* graphicsLayerFactory() override;
     void setRootCompositingLayer(WebCore::GraphicsLayer*) override;
-    void scheduleInitialDeferredPaint() override;
-    void scheduleCompositingLayerFlush() override;
-    void scheduleCompositingLayerFlushImmediately() override;
+    void scheduleRenderingUpdate() override;
+    void scheduleImmediateRenderingUpdate() override;
     void attachViewOverlayGraphicsLayer(WebCore::GraphicsLayer*) override;
 
     void addTransactionCallbackID(CallbackID) override;
 
     RefPtr<WebCore::DisplayRefreshMonitor> createDisplayRefreshMonitor(WebCore::PlatformDisplayID) override;
     void willDestroyDisplayRefreshMonitor(WebCore::DisplayRefreshMonitor*);
+    void setPreferredFramesPerSecond(WebCore::FramesPerSecond);
 
-    bool shouldUseTiledBackingForFrameView(const WebCore::FrameView&) override;
+    bool shouldUseTiledBackingForFrameView(const WebCore::FrameView&) const override;
 
     void updatePreferences(const WebPreferencesStore&) override;
 
-    bool supportsAsyncScrolling() override { return true; }
+    bool supportsAsyncScrolling() const override { return true; }
+    bool usesDelegatedScrolling() const override { return true; }
+    bool usesDelegatedPageScaling() const override { return true; }
 
     void setLayerTreeStateIsFrozen(bool) override;
-    bool layerTreeStateIsFrozen() const override { return m_isFlushingSuspended; }
-    bool layerFlushThrottlingIsActive() const override { return m_isThrottlingLayerFlushes && m_layerFlushTimer.isActive(); }
+    bool layerTreeStateIsFrozen() const override { return m_isRenderingSuspended; }
 
     void forceRepaint() override;
     bool forceRepaintAsync(CallbackID) override { return false; }
 
     void setViewExposedRect(Optional<WebCore::FloatRect>) override;
-    Optional<WebCore::FloatRect> viewExposedRect() const override { return m_scrolledViewExposedRect; }
+    Optional<WebCore::FloatRect> viewExposedRect() const override { return m_viewExposedRect; }
 
     void acceleratedAnimationDidStart(uint64_t layerID, const String& key, MonotonicTime startTime) override;
     void acceleratedAnimationDidEnd(uint64_t layerID, const String& key) override;
 
-#if PLATFORM(IOS_FAMILY)
     WebCore::FloatRect exposedContentRect() const override;
     void setExposedContentRect(const WebCore::FloatRect&) override;
-#endif
 
     void didUpdate() override;
 
@@ -107,19 +108,16 @@ private:
 
     void activityStateDidChange(OptionSet<WebCore::ActivityState::Flag> changed, ActivityStateChangeID, const Vector<CallbackID>& callbackIDs) override;
 
-    bool adjustLayerFlushThrottling(WebCore::LayerFlushThrottleState::Flags) override;
-
     bool addMilestonesToDispatch(OptionSet<WebCore::LayoutMilestone>) override;
 
-    void updateScrolledExposedRect();
     void updateRootLayers();
 
     void addCommitHandlers();
-    void flushLayers();
+    void updateRendering();
 
     WebCore::TiledBacking* mainFrameTiledBacking() const;
 
-    uint64_t takeNextTransactionID() { return ++m_currentTransactionID; }
+    TransactionID takeNextTransactionID() { return m_currentTransactionID.increment(); }
 
     bool markLayersVolatileImmediatelyIfPossible() override;
 
@@ -148,20 +146,15 @@ private:
     WebCore::IntSize m_viewSize;
 
     Optional<WebCore::FloatRect> m_viewExposedRect;
-    Optional<WebCore::FloatRect> m_scrolledViewExposedRect;
 
-    WebCore::Timer m_layerFlushTimer;
-    bool m_isFlushingSuspended { false };
-    bool m_hasDeferredFlush { false };
-    bool m_flushingInitialDeferredPaint { false };
-    bool m_isThrottlingLayerFlushes { false };
-    bool m_isLayerFlushThrottlingTemporarilyDisabledForInteraction { false };
-    bool m_isInitialThrottledLayerFlush { false };
+    WebCore::Timer m_updateRenderingTimer;
+    bool m_isRenderingSuspended { false };
+    bool m_hasDeferredRenderingUpdate { false };
+    bool m_nextRenderingUpdateRequiresSynchronousImageDecoding { false };
+    bool m_inUpdateRendering { false };
 
     bool m_waitingForBackingStoreSwap { false };
-    bool m_hadFlushDeferredWhileWaitingForBackingStoreSwap { false };
-    bool m_nextFlushIsForImmediatePaint { false };
-    bool m_inFlushLayers { false };
+    bool m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap { false };
 
     dispatch_queue_t m_commitQueue;
     RefPtr<BackingStoreFlusher> m_pendingBackingStoreFlusher;
@@ -169,7 +162,7 @@ private:
     HashSet<RemoteLayerTreeDisplayRefreshMonitor*> m_displayRefreshMonitors;
     HashSet<RemoteLayerTreeDisplayRefreshMonitor*>* m_displayRefreshMonitorsToNotify { nullptr };
 
-    uint64_t m_currentTransactionID { 0 };
+    TransactionID m_currentTransactionID;
     Vector<RemoteLayerTreeTransaction::TransactionCallbackID> m_pendingCallbackIDs;
     ActivityStateChangeID m_activityStateChangeID { ActivityStateChangeAsynchronous };
 

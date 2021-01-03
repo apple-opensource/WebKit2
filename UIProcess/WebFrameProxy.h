@@ -53,28 +53,27 @@ class SafeBrowsingWarning;
 class WebCertificateInfo;
 class WebFramePolicyListenerProxy;
 class WebsiteDataStore;
-enum class ShouldExpectSafeBrowsingResult;
-enum class ProcessSwapRequestedByClient;
+enum class ShouldExpectSafeBrowsingResult : bool;
+enum class ProcessSwapRequestedByClient : bool;
 struct WebsitePoliciesData;
 
 class WebFrameProxy : public API::ObjectImpl<API::Object::Type::Frame> {
 public:
-    static Ref<WebFrameProxy> create(WebPageProxy& page, uint64_t frameID)
+    static Ref<WebFrameProxy> create(WebPageProxy& page, WebCore::FrameIdentifier frameID)
     {
         return adoptRef(*new WebFrameProxy(page, frameID));
     }
 
     virtual ~WebFrameProxy();
 
-    uint64_t frameID() const { return m_frameID; }
+    WebCore::FrameIdentifier frameID() const { return m_frameID; }
     WebPageProxy* page() const { return m_page.get(); }
+
+    bool pageIsClosed() const { return !m_page; } // Needs to be thread-safe.
 
     void webProcessWillShutDown();
 
     bool isMainFrame() const;
-
-    void setIsFrameSet(bool value) { m_isFrameSet = value; }
-    bool isFrameSet() const { return m_isFrameSet; }
 
     FrameLoadState& frameLoadState() { return m_frameLoadState; }
 
@@ -109,7 +108,7 @@ public:
     void getResourceData(API::URL*, Function<void (API::Data*, CallbackBase::Error)>&&);
 
     void didStartProvisionalLoad(const URL&);
-    void didExplicitOpen(const URL&);
+    void didExplicitOpen(URL&&, String&& mimeType);
     void didReceiveServerRedirectForProvisionalLoad(const URL&);
     void didFailProvisionalLoad();
     void didCommitLoad(const String& contentType, WebCertificateInfo&, bool containsPluginDocument);
@@ -118,7 +117,7 @@ public:
     void didSameDocumentNavigation(const URL&); // eg. anchor navigation, session state change.
     void didChangeTitle(const String&);
 
-    WebFramePolicyListenerProxy& setUpPolicyListenerProxy(CompletionHandler<void(WebCore::PolicyAction, API::WebsitePolicies*, ProcessSwapRequestedByClient, RefPtr<SafeBrowsingWarning>&&)>&&, ShouldExpectSafeBrowsingResult);
+    WebFramePolicyListenerProxy& setUpPolicyListenerProxy(CompletionHandler<void(WebCore::PolicyAction, API::WebsitePolicies*, ProcessSwapRequestedByClient, RefPtr<SafeBrowsingWarning>&&, Optional<NavigatingToAppBoundDomain>)>&&, ShouldExpectSafeBrowsingResult, ShouldExpectAppBoundDomainResult);
 
 #if ENABLE(CONTENT_FILTERING)
     void contentFilterDidBlockLoad(WebCore::ContentFilterUnblockHandler contentFilterUnblockHandler) { m_contentFilterUnblockHandler = WTFMove(contentFilterUnblockHandler); }
@@ -130,7 +129,7 @@ public:
 #endif
 
 private:
-    WebFrameProxy(WebPageProxy&, uint64_t frameID);
+    WebFrameProxy(WebPageProxy&, WebCore::FrameIdentifier);
 
     WeakPtr<WebPageProxy> m_page;
 
@@ -138,11 +137,10 @@ private:
 
     String m_MIMEType;
     String m_title;
-    bool m_isFrameSet;
     bool m_containsPluginDocument { false };
     RefPtr<WebCertificateInfo> m_certificateInfo;
     RefPtr<WebFramePolicyListenerProxy> m_activeListener;
-    uint64_t m_frameID;
+    WebCore::FrameIdentifier m_frameID;
 #if ENABLE(CONTENT_FILTERING)
     WebCore::ContentFilterUnblockHandler m_contentFilterUnblockHandler;
 #endif

@@ -38,14 +38,16 @@ class DataReference;
 
 namespace WebKit {
 class NetworkSession;
+class NetworkSessionCocoa;
 class NetworkSocketChannel;
 
 class WebSocketTask : public CanMakeWeakPtr<WebSocketTask> {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     WebSocketTask(NetworkSocketChannel&, RetainPtr<NSURLSessionWebSocketTask>&&);
     ~WebSocketTask();
 
-    void sendString(const String&, CompletionHandler<void()>&&);
+    void sendString(const IPC::DataReference&, CompletionHandler<void()>&&);
     void sendData(const IPC::DataReference&, CompletionHandler<void()>&&);
     void close(int32_t code, const String& reason);
 
@@ -58,12 +60,15 @@ public:
     typedef uint64_t TaskIdentifier;
     TaskIdentifier identifier() const;
 
+    NetworkSessionCocoa* networkSession();
+
 private:
     void readNextMessage();
 
     NetworkSocketChannel& m_channel;
     RetainPtr<NSURLSessionWebSocketTask> m_task;
     bool m_receivedDidClose { false };
+    bool m_receivedDidConnect { false };
 };
 
 } // namespace WebKit

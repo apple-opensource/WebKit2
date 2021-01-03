@@ -73,10 +73,6 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/text/StringBuilder.h>
 
-#if PLATFORM(X11)
-#include <WebCore/PlatformDisplay.h>
-#endif
-
 namespace WebKit {
 using namespace JSC;
 using namespace WebCore;
@@ -190,7 +186,7 @@ void PluginView::Stream::continueLoad()
 
 static String buildHTTPHeaders(const ResourceResponse& response, long long& expectedContentLength)
 {
-    if (!response.isHTTP())
+    if (!response.isInHTTPFamily())
         return String();
 
     StringBuilder header;
@@ -783,7 +779,7 @@ void PluginView::setFrameRect(const WebCore::IntRect& rect)
     viewGeometryDidChange();
 }
 
-void PluginView::paint(GraphicsContext& context, const IntRect& /*dirtyRect*/, Widget::SecurityOriginPaintPolicy)
+void PluginView::paint(GraphicsContext& context, const IntRect& /*dirtyRect*/, Widget::SecurityOriginPaintPolicy, EventRegionContext*)
 {
     if (!m_plugin || !m_isInitialized || m_pluginElement->displayState() < HTMLPlugInElement::Restarting)
         return;
@@ -898,7 +894,7 @@ std::unique_ptr<WebEvent> PluginView::createWebEvent(MouseEvent& event) const
     if (event.metaKey())
         modifiers.add(WebEvent::Modifier::MetaKey);
 
-    return std::make_unique<WebMouseEvent>(type, button, event.buttons(), m_plugin->convertToRootView(IntPoint(event.offsetX(), event.offsetY())), event.screenLocation(), 0, 0, 0, clickCount, modifiers, WallTime { }, 0);
+    return makeUnique<WebMouseEvent>(type, button, event.buttons(), m_plugin->convertToRootView(IntPoint(event.offsetX(), event.offsetY())), event.screenLocation(), 0, 0, 0, clickCount, modifiers, WallTime { }, 0);
 }
 
 void PluginView::handleEvent(Event& event)
@@ -1168,7 +1164,7 @@ void PluginView::performURLRequest(URLRequest* request)
     Ref<PluginView> protect(*this);
 
     // First, check if this is a javascript: url.
-    if (WTF::protocolIsJavaScript(request->request().url())) {
+    if (request->request().url().protocolIsJavaScript()) {
         performJavaScriptURLRequest(request);
         return;
     }
@@ -1204,7 +1200,7 @@ void PluginView::performFrameLoadURLRequest(URLRequest* request)
     Frame* targetFrame = frame->loader().findFrameForNavigation(request->target());
     if (!targetFrame) {
         // We did not find a target frame. Ask our frame to load the page. This may or may not create a popup window.
-        FrameLoadRequest frameLoadRequest { *frame, request->request(), ShouldOpenExternalURLsPolicy::ShouldNotAllow };
+        FrameLoadRequest frameLoadRequest { *frame, request->request() };
         frameLoadRequest.setFrameName(request->target());
         frameLoadRequest.setShouldCheckNewWindowPolicy(true);
         frame->loader().load(WTFMove(frameLoadRequest));
@@ -1216,7 +1212,7 @@ void PluginView::performFrameLoadURLRequest(URLRequest* request)
     }
 
     // Now ask the frame to load the request.
-    targetFrame->loader().load(FrameLoadRequest(*targetFrame, request->request(), ShouldOpenExternalURLsPolicy::ShouldNotAllow));
+    targetFrame->loader().load(FrameLoadRequest(*targetFrame, request->request() ));
 
     auto* targetWebFrame = WebFrame::fromCoreFrame(*targetFrame);
     ASSERT(targetWebFrame);
@@ -1233,7 +1229,7 @@ void PluginView::performFrameLoadURLRequest(URLRequest* request)
 
 void PluginView::performJavaScriptURLRequest(URLRequest* request)
 {
-    ASSERT(WTF::protocolIsJavaScript(request->request().url()));
+    ASSERT(request->request().url().protocolIsJavaScript());
 
     RefPtr<Frame> frame = m_pluginElement->document().frame();
     if (!frame)
@@ -1253,7 +1249,7 @@ void PluginView::performJavaScriptURLRequest(URLRequest* request)
     // Evaluate the JavaScript code. Note that running JavaScript here could cause the plug-in to be destroyed, so we
     // grab references to the plug-in here.
     RefPtr<Plugin> plugin = m_plugin;
-    auto result = frame->script().executeScript(jsString, request->allowPopups());
+    auto result = frame->script().executeScriptIgnoringException(jsString, request->allowPopups());
 
     if (!result)
         return;
@@ -1266,9 +1262,9 @@ void PluginView::performJavaScriptURLRequest(URLRequest* request)
     if (!request->target().isNull())
         return;
 
-    ExecState* scriptState = frame->script().globalObject(pluginWorld())->globalExec();
+    JSGlobalObject* globalObject = frame->script().globalObject(pluginWorld());
     String resultString;
-    result.getString(scriptState, resultString);
+    result.getString(globalObject, resultString);
   
     // Send the result back to the plug-in.
     plugin->didEvaluateJavaScript(request->requestID(), resultString);
@@ -1390,7 +1386,7 @@ String PluginView::userAgent()
 
 void PluginView::loadURL(uint64_t requestID, const String& method, const String& urlString, const String& target, const HTTPHeaderMap& headerFields, const Vector<uint8_t>& httpBody, bool allowPopups)
 {
-    FrameLoadRequest frameLoadRequest { m_pluginElement->document(), m_pluginElement->document().securityOrigin(), { }, target, LockHistory::No, LockBackForwardList::No, MaybeSendReferrer, AllowNavigationToInvalidURL::Yes, NewFrameOpenerPolicy::Allow, ShouldOpenExternalURLsPolicy::ShouldNotAllow, InitiatedByMainFrame::Unknown };
+    FrameLoadRequest frameLoadRequest { m_pluginElement->document(), m_pluginElement->document().securityOrigin(), { }, target, InitiatedByMainFrame::Unknown };
     frameLoadRequest.resourceRequest().setHTTPMethod(method);
     frameLoadRequest.resourceRequest().setURL(m_pluginElement->document().completeURL(urlString));
     frameLoadRequest.resourceRequest().setHTTPHeaderFields(headerFields);
@@ -1682,26 +1678,6 @@ void PluginView::didFailLoad(WebFrame* webFrame, bool wasCancelled)
     m_plugin->frameDidFail(request->requestID(), wasCancelled);
 }
 
-#if PLATFORM(X11)
-uint64_t PluginView::createPluginContainer()
-{
-    uint64_t windowID = 0;
-    if (PlatformDisplay::sharedDisplay().type() == PlatformDisplay::Type::X11)
-        m_webPage->sendSync(Messages::WebPageProxy::CreatePluginContainer(), Messages::WebPageProxy::CreatePluginContainer::Reply(windowID));
-    return windowID;
-}
-
-void PluginView::windowedPluginGeometryDidChange(const WebCore::IntRect& frameRect, const WebCore::IntRect& clipRect, uint64_t windowID)
-{
-    m_webPage->send(Messages::WebPageProxy::WindowedPluginGeometryDidChange(frameRect, clipRect, windowID));
-}
-
-void PluginView::windowedPluginVisibilityDidChange(bool isVisible, uint64_t windowID)
-{
-    m_webPage->send(Messages::WebPageProxy::WindowedPluginVisibilityDidChange(isVisible, windowID));
-}
-#endif
-
 #if PLATFORM(COCOA)
 static bool isAlmostSolidColor(BitmapImage* bitmap)
 {
@@ -1842,7 +1818,7 @@ void PluginView::pluginDidReceiveUserInteraction()
     String pluginOrigin = plugInImageElement.loadedUrl().host().toString();
     String mimeType = plugInImageElement.serviceType();
 
-    WebProcess::singleton().plugInDidReceiveUserInteraction(pageOrigin, pluginOrigin, mimeType, plugInImageElement.document().page()->sessionID());
+    WebProcess::singleton().plugInDidReceiveUserInteraction(pageOrigin, pluginOrigin, mimeType);
 }
 
 bool PluginView::shouldCreateTransientPaintingSnapshot() const

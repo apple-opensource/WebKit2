@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DeviceIdHashSaltStorage.h"
 
+#include "Logging.h"
 #include "PersistencyUtils.h"
 
 #include <WebCore/SharedBuffer.h>
@@ -113,15 +114,9 @@ void DeviceIdHashSaltStorage::loadStorageFromDisk(CompletionHandler<void(HashMap
 
         FileSystem::makeAllDirectories(m_deviceIdHashSaltStorageDirectory);
 
-        auto originPaths = FileSystem::listDirectory(m_deviceIdHashSaltStorageDirectory, "*");
-
         HashMap<String, std::unique_ptr<HashSaltForOrigin>> deviceIdHashSaltForOrigins;
-        for (const auto& originPath : originPaths) {
-            URL url;
-            url.setProtocol("file"_s);
-            url.setPath(originPath);
-
-            String deviceIdHashSalt = url.lastPathComponent();
+        for (auto& originPath : FileSystem::listDirectory(m_deviceIdHashSaltStorageDirectory, "*")) {
+            auto deviceIdHashSalt = URL::fileURLWithFileSystemPath(originPath).lastPathComponent().toString();
 
             if (hashSaltSize != deviceIdHashSalt.length()) {
                 RELEASE_LOG_ERROR(DiskPersistency, "DeviceIdHashSaltStorage: The length of the hash salt (%d) is different to the length of the hash salts defined in WebKit (%d)", deviceIdHashSalt.length(), hashSaltSize);
@@ -178,7 +173,7 @@ std::unique_ptr<DeviceIdHashSaltStorage::HashSaltForOrigin> DeviceIdHashSaltStor
         return nullptr;
     }
 
-    auto hashSaltForOrigin = std::make_unique<HashSaltForOrigin>(WTFMove(securityOriginData.value()), WTFMove(parentSecurityOriginData.value()), WTFMove(deviceIdHashSalt));
+    auto hashSaltForOrigin = makeUnique<HashSaltForOrigin>(WTFMove(securityOriginData.value()), WTFMove(parentSecurityOriginData.value()), WTFMove(deviceIdHashSalt));
 
     hashSaltForOrigin->lastTimeUsed = WallTime::fromRawSeconds(lastTimeUsed);
 
@@ -215,11 +210,11 @@ void DeviceIdHashSaltStorage::completeDeviceIdHashSaltForOriginCall(SecurityOrig
         StringBuilder builder;
         builder.reserveCapacity(hashSaltSize);
         for (unsigned i = 0; i < randomDataSize; i++)
-            appendUnsignedAsHex(randomData[i], builder);
+            builder.append(hex(randomData[i]));
 
         String deviceIdHashSalt = builder.toString();
 
-        auto newHashSaltForOrigin = std::make_unique<HashSaltForOrigin>(WTFMove(documentOrigin), WTFMove(parentOrigin), WTFMove(deviceIdHashSalt));
+        auto newHashSaltForOrigin = makeUnique<HashSaltForOrigin>(WTFMove(documentOrigin), WTFMove(parentOrigin), WTFMove(deviceIdHashSalt));
 
         return newHashSaltForOrigin;
     }).iterator->value;

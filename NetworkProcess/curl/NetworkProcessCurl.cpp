@@ -41,15 +41,10 @@ void NetworkProcess::platformInitializeNetworkProcess(const NetworkProcessCreati
 
 std::unique_ptr<WebCore::NetworkStorageSession> NetworkProcess::platformCreateDefaultStorageSession() const
 {
-    return std::make_unique<WebCore::NetworkStorageSession>(PAL::SessionID::defaultSessionID());
+    return makeUnique<WebCore::NetworkStorageSession>(PAL::SessionID::defaultSessionID());
 }
 
 void NetworkProcess::allowSpecificHTTPSCertificateForHost(const CertificateInfo& certificateInfo, const String& host)
-{
-    notImplemented();
-}
-
-void NetworkProcess::clearCacheForAllOrigins(uint32_t cachesToClear)
 {
     notImplemented();
 }
@@ -61,17 +56,6 @@ void NetworkProcess::clearDiskCache(WallTime, CompletionHandler<void()>&& comple
 }
 
 void NetworkProcess::platformTerminate()
-{
-    notImplemented();
-}
-
-void NetworkProcess::platformPrepareToSuspend(CompletionHandler<void()>&& completionHandler)
-{
-    notImplemented();
-    completionHandler();
-}
-
-void NetworkProcess::platformProcessDidResume()
 {
     notImplemented();
 }

@@ -30,6 +30,7 @@
 #include <WebCore/FindOptions.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PageOverlay.h>
+#include <WebCore/SimpleRange.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
@@ -46,25 +47,28 @@ enum class DidWrap : bool;
 
 namespace WebKit {
 
+class CallbackID;
 class WebPage;
 
 class FindController : private WebCore::PageOverlay::Client {
+    WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(FindController);
 
 public:
     explicit FindController(WebPage*);
     virtual ~FindController();
 
-    void findString(const String&, FindOptions, unsigned maxMatchCount);
-    void findStringMatches(const String&, FindOptions, unsigned maxMatchCount);
+    void findString(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, CompletionHandler<void(bool)>&&);
+    void findStringMatches(const String&, OptionSet<FindOptions>, unsigned maxMatchCount);
     void getImageForFindMatch(uint32_t matchIndex);
     void selectFindMatch(uint32_t matchIndex);
     void indicateFindMatch(uint32_t matchIndex);
     void hideFindUI();
-    void countStringMatches(const String&, FindOptions, unsigned maxMatchCount);
+    void countStringMatches(const String&, OptionSet<FindOptions>, unsigned maxMatchCount);
     uint32_t replaceMatches(const Vector<uint32_t>& matchIndices, const String& replacementText, bool selectionOnly);
     
     void hideFindIndicator();
+    void resetMatchIndex();
     void showFindIndicatorInSelection();
 
     bool isShowingOverlay() const { return m_isShowingFindIndicator && m_findPageOverlay; }
@@ -85,7 +89,7 @@ private:
     bool updateFindIndicator(WebCore::Frame& selectedFrame, bool isShowingOverlay, bool shouldAnimate = true);
 
     enum class FindUIOriginator : uint8_t { FindString, FindStringMatches };
-    void updateFindUIAfterPageScroll(bool found, const String&, FindOptions, unsigned maxMatchCount, WebCore::DidWrap, FindUIOriginator);
+    void updateFindUIAfterPageScroll(bool found, const String&, OptionSet<FindOptions>, unsigned maxMatchCount, WebCore::DidWrap, FindUIOriginator);
 
     void willFindString();
     void didFindString();
@@ -103,7 +107,7 @@ private:
     // the find indicator isn't showing, but it will never be false when it is showing.
     bool m_isShowingFindIndicator { false };
     WebCore::IntRect m_findIndicatorRect;
-    Vector<RefPtr<WebCore::Range>> m_findMatches;
+    Vector<WebCore::SimpleRange> m_findMatches;
     // Index value is -1 if not found or if number of matches exceeds provided maximum.
     int m_foundStringMatchIndex { -1 };
 
@@ -113,6 +117,6 @@ private:
 #endif
 };
 
-WebCore::FindOptions core(FindOptions);
+WebCore::FindOptions core(OptionSet<FindOptions>);
 
 } // namespace WebKit
